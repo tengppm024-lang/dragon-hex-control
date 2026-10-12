@@ -3,9 +3,9 @@
 เว็บ: https://tengppm024-lang.github.io/dragon-hex-control/
 API: https://dragon-hex-control-api.dragonhex.workers.dev
 
-ตรวจคีย์จาก API เดิมของ dhx แล้วให้ดาวน์โหลดไฟล์ 3105 ที่เพิ่มตัวรับคำสั่งเว็บและจับคู่กับเบราว์เซอร์นี้ ดู RECEIVER_NOTES.md สำหรับวิธีนำเข้าและข้อจำกัดการทดสอบบนเครื่องจริง
+ตรวจคีย์เดียวกับ IPA ผ่านจุดตรวจสิทธิ์เว็บของ dhx โดยไม่ผูกเครื่องใหม่ แล้วให้ดาวน์โหลดไฟล์ 3105 ที่จับคู่กับช่องของคีย์นี้ หนึ่งคีย์มีหนึ่งช่องและหนึ่งตัวรับที่ใช้ได้ ดู KEY_ISOLATION.md และ RECEIVER_NOTES.md
 
-หน้าเว็บมี AIM SYSTEM, SILENT AIM, NO RECOIL, TARGET และ HEADSHOT บันทึก config ลง Durable Object ต่ออุปกรณ์ ตัวรับในแพตช์อ่านคำสั่งและส่ง applied mask กลับมา เว็บจะแสดง GAME ACKNOWLEDGED เฉพาะเมื่อมี heartbeat และค่าตรงกับ config ล่าสุด
+หน้าเว็บมี AIM SYSTEM, SILENT AIM, NO RECOIL, TARGET และ HEADSHOT บันทึก config ลง Durable Object ต่อคีย์ที่ server คำนวณชื่อเอง ตัวรับในแพตช์อ่านคำสั่งและส่ง applied mask กับตัวระบุเครื่องกลับมา ต่างคีย์ใช้คนละช่อง และเว็บออกจากระบบเมื่อคีย์หมดอายุ
 
 GET/PUT /api/device-config ใช้ Authorization: Bearer access-key
 POST /api/device-patch ใช้ access-key สร้างไฟล์จับคู่

@@ -51,3 +51,21 @@ assert.equal((await get('KEY_B','same-browser')).status,200);
 assert.equal((await worker.fetch(req('/api/device-patch','KEY_A','POST',{build:'22'}),env)).status,403);
 assert.equal((await worker.fetch(new Request('https://example.com/',{headers:{Origin:'https://other.example'}}),env)).status,403);
 console.log('PASS: server-derived key scope; atomic one-device claim; old token revoked on replacement; expired keys rejected without affecting other users');
+
+if(process.env.DHX_RECEIVER_TEMPLATE){
+  rejected.delete('KEY_A');
+  const template=JSON.parse(fs.readFileSync(process.env.DHX_RECEIVER_TEMPLATE,'utf8'));
+  await kv.put('receiver:template:v1',JSON.stringify(template));
+  const response=await worker.fetch(req('/api/device-patch','KEY_A','POST',{build:'22',deviceId:'arbitrary-browser'}),env);
+  assert.equal(response.status,200);
+  const pkg=new Uint8Array(await response.arrayBuffer());
+  const enc=pkg.slice(template.encryptedOffset,template.encryptedOffset+template.encryptedLength);
+  const aes=await crypto.subtle.importKey('raw',Buffer.from(template.contentKey,'base64'),'AES-GCM',false,['decrypt']);
+  const plain=new Uint8Array(await crypto.subtle.decrypt({name:'AES-GCM',iv:enc.slice(0,12),additionalData:new TextEncoder().encode(template.aad)},aes,enc.slice(12)));
+  const newToken=new TextDecoder().decode(plain.slice(template.tokenOffset,template.tokenOffset+64));
+  assert.equal((await poll(newToken,'download-phone-123456')).status,200);
+  assert.equal((await poll(tokenA)).status,409);
+  assert.equal((await poll(tokenB,'phone-two-123456')).status,200);
+  assert.equal((await poll(newToken,'other-copy-phone-123456')).status,409);
+  console.log('PASS: full download → decrypt → registered token → isolated runtime; replacement affects only its own key');
+}
