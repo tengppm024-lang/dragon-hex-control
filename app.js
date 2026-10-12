@@ -1,6 +1,6 @@
 'use strict';
 
-const API_BASE = 'https://dhx.dragonhex.workers.dev';
+const API_BASE = window.DRAGON_HEX_CONFIG.apiBase.replace(/\/$/, '');
 const BUILD = 'dragon-hex-control/1.0';
 const $ = id => document.getElementById(id);
 
@@ -15,16 +15,17 @@ localStorage.setItem('dragonhex.web.device', state.deviceId);
 async function request(path, options = {}) {
   const response = await fetch(`${API_BASE}${path}`, {
     ...options,
+    signal: AbortSignal.timeout(15000),
     headers: { Accept: 'application/json', ...options.headers }
   });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw Object.assign(new Error(data.message || `HTTP ${response.status}`), { status: response.status });
+  const data = await response.json().catch(() => { throw new Error('API ไม่ได้ส่งข้อมูล JSON'); });
+  if (!response.ok || data.ok === false) throw Object.assign(new Error(data.message || `HTTP ${response.status}`), { status: response.status });
   return data;
 }
 
 function setApiStatus(mode, text) {
   $('api-state').className = `api-state ${mode}`;
-  $('api-state').innerHTML = `<i></i> ${text}`;
+  $('api-state').replaceChildren(document.createElement('i'), document.createTextNode(` ${text}`));
 }
 
 function setControlsEnabled(enabled) {
@@ -66,10 +67,10 @@ async function loadDashboard() {
   // This is the feature-control contract required by the web panel and the device patch.
   // The current Worker returns 404 until that backend/device integration is deployed.
   try {
-    const data = await request(`/api/device-config?key=${encodeURIComponent(state.key)}&deviceId=${encodeURIComponent(state.deviceId)}`);
+    const data = await request(`/api/device-config?deviceId=${encodeURIComponent(state.deviceId)}`, { headers: { Authorization: `Bearer ${state.key}` } });
     state.config = { ...state.config, ...data.config };
     state.controlSupported = true;
-    $('sync-label').textContent = 'CONNECTED';
+    $('sync-label').textContent = 'API CONNECTED';
     $('control-warning').hidden = true;
   } catch (error) {
     state.controlSupported = false;
@@ -80,7 +81,7 @@ async function loadDashboard() {
       : `โหลดสถานะอุปกรณ์ไม่สำเร็จ: ${error.message}`;
   }
   renderConfig();
-  setControlsEnabled(state.controlSupported);
+  setControlsEnabled(state.controlSupported && !status?.maintenance);
 }
 
 $('show-key').onclick = () => {
@@ -93,6 +94,12 @@ $('login-form').onsubmit = async event => {
   event.preventDefault();
   const button = $('login-button');
   const feedback = $('login-feedback');
+  state.deviceId = $('device-id').value.trim();
+  localStorage.setItem('dragonhex.web.device', state.deviceId);
+  state.config = { aimSystem: false, noRecoil: false, target: 'head', headshot: 0 };
+  state.controlSupported = false;
+  $('maintenance').hidden = true;
+  $('save-status').textContent = 'READY TO SAVE';
   state.key = $('key').value.trim();
   button.disabled = true;
   feedback.textContent = 'กำลังตรวจสอบคีย์…';
@@ -130,14 +137,14 @@ $('save').onclick = async () => {
   try {
     await request('/api/device-config', {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ key: state.key, deviceId: state.deviceId, config: state.config })
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${state.key}` },
+      body: JSON.stringify({ deviceId: state.deviceId, config: state.config })
     });
-    $('save-status').textContent = 'SYNCED TO DEVICE';
+    $('save-status').textContent = 'SAVED TO API';
   } catch (error) {
     $('save-status').textContent = `SYNC FAILED · ${error.message}`;
   } finally {
-    button.disabled = !state.controlSupported;
+    button.disabled = !state.controlSupported || !$('maintenance').hidden;
   }
 };
 
@@ -149,5 +156,7 @@ $('logout').onclick = () => {
   setControlsEnabled(false);
 };
 
+$('device-id').value = state.deviceId;
 setControlsEnabled(false);
 probe();
+

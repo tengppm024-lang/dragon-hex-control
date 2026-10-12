@@ -13,3 +13,18 @@ Worker ไม่เก็บคีย์เป็นข้อความปก�
 ## Deploy
 
 สร้าง Workers KV namespace แล้วแทน `REPLACE_WITH_KV_NAMESPACE_ID` ใน `wrangler.jsonc` จากนั้นรัน `npx wrangler deploy`
+
+จากโฟลเดอร์ worker:
+
+```sh
+npm install
+npx wrangler login
+npx wrangler kv namespace create DEVICE_CONFIG
+# ใส่ namespace ID ที่ได้รับใน wrangler.jsonc
+npm run deploy
+```
+
+นำ URL Worker ที่ Deploy สำเร็จไปใส่ `apiBase` ใน `../config.js` แล้วทดสอบจากเว็บ GitHub Pages
+
+GET และ PUT config ต้องส่ง `Authorization: Bearer YOUR_KEY` ไม่รับคีย์จาก query string หรือ body ของ endpoint นี้
+

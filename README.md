@@ -11,7 +11,8 @@ API ปัจจุบันยังไม่มี endpoint สำหรับ
 ## API contract ที่ต้องเพิ่ม
 
 ```http
-GET /api/device-config?key=...&deviceId=...
+GET /api/device-config?deviceId=...
+Authorization: Bearer YOUR_KEY
 ```
 
 ```json
@@ -30,12 +31,16 @@ GET /api/device-config?key=...&deviceId=...
 ```http
 PUT /api/device-config
 Content-Type: application/json
+Authorization: Bearer YOUR_KEY
 
-{"key":"...","deviceId":"...","config":{"aimSystem":true,"noRecoil":false,"target":"head","headshot":75}}
+{"deviceId":"...","config":{"aimSystem":true,"noRecoil":false,"target":"head","headshot":75}}
 ```
 
 ฝั่งแพตช์ต้อง poll endpoint นี้และนำค่าไปใช้กับตัวแปรจริงของฟังก์ชัน หากยังไม่มีส่วนนี้ GitHub Pages เพียงอย่างเดียวจะไม่สามารถเปลี่ยนสถานะในเกมบน iPhone ได้
 
 ## Publish
 
-เปิด GitHub Pages จาก branch `main` และ root `/` หรือใช้ workflow ใน `.github/workflows/pages.yml`
+ใช้ workflow ใน `.github/workflows/pages.yml` ซึ่งเผยแพร่เฉพาะไฟล์หน้าเว็บ ห้ามเผยแพร่ root ทั้งโฟลเดอร์ เพราะมีไฟล์แพตช์ต้นฉบับอยู่ด้วย
+
+หลัง Deploy Worker ให้ใส่ URL จริงใน `config.js` ก่อนเผยแพร่หน้าเว็บ ดู `DEVICE_API.md` สำหรับการเชื่อมอุปกรณ์
+

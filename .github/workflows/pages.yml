@@ -25,9 +25,14 @@ jobs:
       - uses: actions/configure-pages@v5
         with:
           enablement: true
+      - name: Prepare public website
+        run: |
+          mkdir -p public-site
+          cp index.html app.js config.js style.css public-site/
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: .
+          path: public-site
       - name: Deploy
         id: deployment
         uses: actions/deploy-pages@v4
+
