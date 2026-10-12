@@ -1,7 +1,7 @@
 'use strict';
 
 const API_BASE = window.DRAGON_HEX_CONFIG.apiBase.replace(/\/$/, '');
-let BUILD = localStorage.getItem('dragonhex.web.build') || '';
+const BUILD = window.DRAGON_HEX_CONFIG.buildNumber;
 const $ = id => document.getElementById(id);
 
 const state = {
@@ -94,10 +94,6 @@ $('login-form').onsubmit = async event => {
   event.preventDefault();
   const button = $('login-button');
   const feedback = $('login-feedback');
-  BUILD = $('build-number').value.trim();
-  localStorage.setItem('dragonhex.web.build', BUILD);
-  state.deviceId = $('device-id').value.trim();
-  localStorage.setItem('dragonhex.web.device', state.deviceId);
   state.config = { aimSystem: false, noRecoil: false, target: 'head', headshot: 0 };
   state.controlSupported = false;
   $('maintenance').hidden = true;
@@ -158,8 +154,6 @@ $('logout').onclick = () => {
   setControlsEnabled(false);
 };
 
-$('device-id').value = state.deviceId;
-$('build-number').value = BUILD;
 setControlsEnabled(false);
 probe();
 
