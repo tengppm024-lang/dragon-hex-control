@@ -4,11 +4,12 @@ const API_BASE = window.DRAGON_HEX_CONFIG.apiBase.replace(/\/$/, '');
 const BUILD = window.DRAGON_HEX_CONFIG.buildNumber;
 const $ = id => document.getElementById(id);
 
+const defaultConfig=()=>({aimSystem:false,silentAim:false,noRecoil:false,espMaster:false,skeleton:false,distance:false,playerName:false,healthBar:false,topTracer:false,playerBox:false,fovCircle:false,target:'head',headshot:0,aimSystemTarget:'head',fovRadius:197});
 const state = {
   key: '',
   expiresAt: null,
   deviceId: localStorage.getItem('dragonhex.web.device') || crypto.randomUUID(),
-  config: { aimSystem: false, silentAim: false, noRecoil: false, target: 'head', headshot: 0 },
+  config: defaultConfig(),
   controlSupported: false
 };
 localStorage.setItem('dragonhex.web.device', state.deviceId);
@@ -30,11 +31,14 @@ function setApiStatus(mode, text) {
 }
 
 function setControlsEnabled(enabled) {
-  document.querySelectorAll('.feature-toggle, .segmented button').forEach(control => { control.disabled = !enabled; });
+  document.querySelectorAll('.feature-toggle, .segmented button, #fov-radius').forEach(control => { control.disabled = !enabled; });
   $('save').disabled = !enabled;
 }
 
 function renderConfig() {
+  document.querySelectorAll('[data-aim-target]').forEach(button=>button.classList.toggle('active',button.dataset.aimTarget===state.config.aimSystemTarget));
+  const radius=Math.max(0,Math.min(31,Math.round((state.config.fovRadius-50)/11.29)));
+  $('fov-radius').value=String(radius);$('fov-value').textContent=`${Math.round(50+radius*11.29)} px`;
   document.querySelectorAll('.feature-toggle').forEach(input => { input.checked = Boolean(state.config[input.dataset.feature]); });
   document.querySelectorAll('[data-target]').forEach(button => button.classList.toggle('active', button.dataset.target === state.config.target));
   document.querySelectorAll('[data-headshot]').forEach(button => button.classList.toggle('active', Number(button.dataset.headshot) === Number(state.config.headshot)));
@@ -71,7 +75,8 @@ async function loadDashboard() {
   try {
     const data = await request(`/api/device-config?deviceId=${encodeURIComponent(state.deviceId)}&build=${encodeURIComponent(BUILD)}`, { headers: { Authorization: `Bearer ${state.key}` } });
     if(state.key!==sessionKey)return;
-    state.config = { ...state.config, ...data.config };
+    state.config = { ...defaultConfig(), ...data.config };
+    if(state.config.target==='neck')state.config.target='head';
     state.controlSupported = true;
     $('sync-label').textContent = 'WAITING FOR GAME';
     $('control-warning').hidden = true;
@@ -96,6 +101,7 @@ async function refreshRuntime() {
   try {
     const data = await request(`/api/runtime-status?deviceId=${encodeURIComponent(state.deviceId)}&build=${encodeURIComponent(BUILD)}`, { headers: { Authorization: `Bearer ${state.key}` } });
     if(state.key!==sessionKey)return;
+    if(data.upgradeRequired){$('runtime-state').textContent='ดาวน์โหลด 3105 รุ่นใหม่เพื่อใช้ ESP และ FOV';$('sync-label').textContent='UPDATE RECEIVER';return;}
     $('runtime-state').textContent = data.online ? (data.applied ? 'เกมรับและใช้ค่าล่าสุดแล้ว' : 'เกมเชื่อมต่อแล้ว กำลังรอใช้ค่าล่าสุด') : 'ยังไม่มีการตอบกลับจากเกม';
     $('sync-label').textContent = data.online ? (data.applied ? 'GAME ACKNOWLEDGED' : 'GAME CONNECTED') : 'WAITING FOR GAME';
   } catch (error) {
@@ -127,13 +133,25 @@ $('download-patch').onclick = async () => {
   finally { button.disabled = false; }
 };
 setInterval(refreshRuntime, 5000);
-setInterval(()=>{if(state.key && state.expiresAt && Date.now()>=Date.parse(state.expiresAt))endSession('คีย์หมดอายุ กรุณาเข้าสู่ระบบด้วยคีย์ที่ยังใช้งานได้');},1000);
+function updateExpiry(){
+  if(!state.key)return;
+  if(!state.expiresAt){$('key-countdown').textContent='ไม่จำกัดเวลา';$('key-expiry').textContent='คีย์ไม่มีวันหมดอายุ';return;}
+  const expires=Date.parse(state.expiresAt),left=expires-Date.now();
+  if(!Number.isFinite(expires) || left<=0){endSession('คีย์หมดอายุ ไม่สามารถใช้คีย์นี้เข้าสู่ระบบได้อีก');return;}
+  const total=Math.ceil(left/1000),days=Math.floor(total/86400),hours=Math.floor(total%86400/3600),minutes=Math.floor(total%3600/60),seconds=total%60;
+  $('key-countdown').textContent=(days?`${days} วัน `:'')+[hours,minutes,seconds].map(v=>String(v).padStart(2,'0')).join(':');
+  $('key-expiry').textContent='หมดอายุ '+new Date(expires).toLocaleString('th-TH',{dateStyle:'medium',timeStyle:'medium'});
+  $('key-status').textContent=left<3600000?'ใกล้หมดอายุ':'ACTIVE';
+  $('key-countdown').classList.toggle('expiring',left<3600000);
+}
+setInterval(updateExpiry,1000);
 
 function endSession(message='') {
   state.key='';state.expiresAt=null;state.controlSupported=false;
   state.config={aimSystem:false,silentAim:false,noRecoil:false,target:'head',headshot:0};
   $('key').value='';$('dashboard').hidden=true;$('login-view').hidden=false;
   $('login-feedback').textContent=message;
+  window.location.hash='login';$('key-countdown').textContent='—';$('key-expiry').textContent='—';
   setControlsEnabled(false);renderConfig();
 }
 
@@ -147,7 +165,7 @@ $('login-form').onsubmit = async event => {
   event.preventDefault();
   const button = $('login-button');
   const feedback = $('login-feedback');
-  state.config = { aimSystem: false, silentAim: false, noRecoil: false, target: 'head', headshot: 0 };
+  state.config = defaultConfig();
   state.controlSupported = false;
   $('maintenance').hidden = true;
   $('save-status').textContent = 'READY TO SAVE';
@@ -156,6 +174,7 @@ $('login-form').onsubmit = async event => {
   feedback.textContent = 'กำลังตรวจสอบคีย์…';
   try {
     const auth = await authenticate(state.key);
+    if(auth.expiresAt && (!Number.isFinite(Date.parse(auth.expiresAt)) || Date.now()>=Date.parse(auth.expiresAt)))throw new Error('คีย์หมดอายุ');
     if (!auth.valid) throw new Error(auth.message || 'คีย์ไม่ถูกต้อง');
     state.expiresAt=auth.expiresAt || null;
     $('key-status').textContent = auth.expiresAt ? `ACTIVE · ${new Date(auth.expiresAt).toLocaleDateString('th-TH')}` : 'ACTIVE';
@@ -163,6 +182,7 @@ $('login-form').onsubmit = async event => {
     $('login-view').hidden = true;
     $('dashboard').hidden = false;
     feedback.textContent = '';
+    window.location.hash='control';updateExpiry();
     await loadDashboard();
   } catch (error) {
     feedback.textContent = error.message || 'เชื่อมต่อไม่สำเร็จ';
@@ -178,6 +198,9 @@ document.querySelectorAll('.feature-toggle').forEach(input => {
 document.querySelectorAll('[data-target]').forEach(button => {
   button.onclick = () => { state.config.target = button.dataset.target; renderConfig(); $('save-status').textContent = 'UNSAVED CHANGES'; };
 });
+$('fov-radius').oninput=()=>{state.config.fovRadius=Math.round(50+Number($('fov-radius').value)*11.29);renderConfig();$('save-status').textContent='UNSAVED CHANGES';};
+document.querySelectorAll('[data-aim-target]').forEach(button=>{button.onclick=()=>{state.config.aimSystemTarget=button.dataset.aimTarget;renderConfig();$('save-status').textContent='UNSAVED CHANGES';};});
+
 document.querySelectorAll('[data-headshot]').forEach(button => {
   button.onclick = () => { state.config.headshot = Number(button.dataset.headshot); renderConfig(); $('save-status').textContent = 'UNSAVED CHANGES'; };
 });
@@ -209,6 +232,7 @@ $('logout').onclick = () => {
   endSession();
 };
 
+window.location.hash='login';
 setControlsEnabled(false);
 probe();
 

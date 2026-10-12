@@ -33,7 +33,7 @@ assert.equal((await put('KEY_A',{...config,headshot:'75'},'same-browser')).statu
 console.log('PASS: different keys remain isolated with identical browser IDs; same key has one channel across browsers; strict validation');
 const tokenA='a'.repeat(64),tokenB='b'.repeat(64),newToken='c'.repeat(64);
 async function activate(key,token){const id='user:'+await sha(key);await kv.put('receiver:'+await sha(token),JSON.stringify({key,build:'22',storageKey:'untrusted-client-value'}));return env.DEVICE_STATE.get(id).fetch('https://state/activate',{method:'POST',body:JSON.stringify({tokenHash:await sha(token)})});}
-async function poll(token,device='phone-one-123456',applied=mod.controlMask(config)){return worker.fetch(new Request('https://example.com/api/runtime-config',{headers:{Authorization:'Bearer '+token,'X-Dragonhex-Device':device,'X-Dragonhex-Applied':String(applied)}}),env);}
+async function poll(token,device='phone-one-123456',applied=mod.controlMask(config),version=1){return worker.fetch(new Request('https://example.com/api/runtime-config'+(version===2?'-v2':''),{headers:{Authorization:'Bearer '+token,'X-Dragonhex-Device':device,'X-Dragonhex-Applied':String(applied)}}),env);}
 await activate('KEY_A',tokenA);await activate('KEY_B',tokenB);
 assert.equal(await (await poll(tokenA)).text(),String(mod.controlMask(config)));
 assert.equal(await (await poll(tokenB,'phone-two-123456')).text(),String(mod.controlMask(configB)));
@@ -55,7 +55,7 @@ console.log('PASS: server-derived key scope; atomic one-device claim; old token 
 if(process.env.DHX_RECEIVER_TEMPLATE){
   rejected.delete('KEY_A');
   const template=JSON.parse(fs.readFileSync(process.env.DHX_RECEIVER_TEMPLATE,'utf8'));
-  await kv.put('receiver:template:v1',JSON.stringify(template));
+  await kv.put('receiver:template:v2',JSON.stringify(template));
   const response=await worker.fetch(req('/api/device-patch','KEY_A','POST',{build:'22',deviceId:'arbitrary-browser'}),env);
   assert.equal(response.status,200);
   const pkg=new Uint8Array(await response.arrayBuffer());
@@ -63,9 +63,26 @@ if(process.env.DHX_RECEIVER_TEMPLATE){
   const aes=await crypto.subtle.importKey('raw',Buffer.from(template.contentKey,'base64'),'AES-GCM',false,['decrypt']);
   const plain=new Uint8Array(await crypto.subtle.decrypt({name:'AES-GCM',iv:enc.slice(0,12),additionalData:new TextEncoder().encode(template.aad)},aes,enc.slice(12)));
   const newToken=new TextDecoder().decode(plain.slice(template.tokenOffset,template.tokenOffset+64));
-  assert.equal((await poll(newToken,'download-phone-123456')).status,200);
+  assert.equal((await poll(newToken,'download-phone-123456',mod.controlMask(config,2),2)).status,200);
   assert.equal((await poll(tokenA)).status,409);
   assert.equal((await poll(tokenB,'phone-two-123456')).status,200);
-  assert.equal((await poll(newToken,'other-copy-phone-123456')).status,409);
-  console.log('PASS: full download → decrypt → registered token → isolated runtime; replacement affects only its own key');
+  assert.equal((await poll(newToken,'other-copy-phone-123456',mod.controlMask(config,2),2)).status,409);
+  assert.equal((await poll(newToken,'download-phone-123456')).status,409);
+  console.log('PASS: v2 protocol enforced; full download → decrypt → registered token → isolated runtime; replacement affects only its own key');
 }
+
+rejected.delete('KEY_A');
+const full={...config,aimSystemTarget:'neck',fovRadius:400,espMaster:true,skeleton:true,distance:true,playerName:true,healthBar:true,topTracer:true,playerBox:true,fovCircle:true};
+assert.equal((await put('KEY_A',full,'browser-A')).status,200);
+const stored=(await (await get('KEY_A','other-browser')).json()).config;
+for(const [k,v] of Object.entries(full))assert.equal(stored[k],v);
+assert.equal(mod.controlMask(full,2)&127,127);
+assert.equal((mod.controlMask(full,2)>>24)&31,31);
+assert.equal((mod.controlMask(full,2)>>29)&1,1);
+assert.equal(mod.controlMask({...full,espMaster:false},2)&1,0);
+assert.equal((mod.controlMask({...full,skeleton:false},2)>>29)&1,0);
+assert.equal(mod.controlMask(full,2)&(1<<23),0);
+assert.equal(mod.controlMask({...full,aimSystemTarget:'head'},2)&(1<<23),1<<23);
+for(const k of ['espMaster','skeleton','distance','playerName','healthBar','topTracer','playerBox','fovCircle'])assert.equal((await put('KEY_A',{...full,[k]:'true'},'browser')).status,400);
+for(const radius of [49,401,'200',100.5])assert.equal((await put('KEY_A',{...full,fovRadius:radius},'browser')).status,400);
+console.log('PASS: all ESP/AIM fields persist; independent targets; exact FOV bounds; strict feature types');

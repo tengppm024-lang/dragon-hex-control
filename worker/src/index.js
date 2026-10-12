@@ -22,7 +22,7 @@ export class DeviceState {
         if (!owner || owner.tokenHash !== data.tokenHash) return new Response('Receiver replaced', {status:409});
         if (owner.deviceHash && owner.deviceHash !== data.deviceHash) return new Response('Key already connected to another game device', {status:409});
         if (!owner.deviceHash) await tx.put('receiver', {...owner,deviceHash:data.deviceHash});
-        if (data.appliedMask !== null) await tx.put('seen', {seenAt:new Date().toISOString(),appliedMask:data.appliedMask});
+        if (data.appliedMask !== null) await tx.put('seen', {seenAt:new Date().toISOString(),appliedMask:data.appliedMask,protocolVersion:data.protocolVersion || 1});
         return new Response(JSON.stringify(await tx.get('config') || defaults()), {headers:{'content-type':'application/json'}});
       });
     }
@@ -92,27 +92,32 @@ async function authenticate(key, deviceId, build = '') {
     signal: AbortSignal.timeout(10000)
   });
   const body = await response.json().catch(() => ({ valid: false, message: 'Invalid upstream response' }));
+  if(body.expiresAt && (!Number.isFinite(Date.parse(body.expiresAt)) || Date.now()>=Date.parse(body.expiresAt)))return {ok:false,status:403,body:{ok:false,valid:false,message:'คีย์หมดอายุ'}};
   const ok = response.ok && body.valid === true && body.banned !== true;
   return { ok, status: ok ? response.status : (response.ok ? 401 : response.status), body };
 }
 
+const FEATURES = ['aimSystem','silentAim','noRecoil','espMaster','skeleton','distance','playerName','healthBar','topTracer','playerBox','fovCircle'];
 function validConfig(input) {
-  const targets = new Set(['head', 'neck', 'body', 'mixed']);
-  const headshots = new Set([0, 25, 50, 75, 100]);
   return input && typeof input.aimSystem === 'boolean' && typeof input.noRecoil === 'boolean' &&
-    (input.silentAim === undefined || typeof input.silentAim === 'boolean') &&
-    targets.has(input.target) && typeof input.headshot === 'number' && headshots.has(input.headshot);
+    FEATURES.every(k => input[k] === undefined || typeof input[k] === 'boolean') &&
+    ['head','neck','body','mixed'].includes(input.target) && [0,25,50,75,100].includes(input.headshot) &&
+    (input.aimSystemTarget === undefined || ['neck','head'].includes(input.aimSystemTarget)) &&
+    (input.fovRadius === undefined || (Number.isInteger(input.fovRadius) && input.fovRadius >= 50 && input.fovRadius <= 400));
 }
-
-export function controlMask(config) {
-  // These bit positions come from the supplied patch's menu and game methods.
-  const target = config.target === 'head' || config.target === 'neck' ? 1 : config.target === 'body' ? 2 : 0;
-  return (config.silentAim ? 1 << 15 : 0) | (target << 16) |
-    (config.noRecoil ? 1 << 18 : 0) | ((4 - config.headshot / 25) << 19) |
-    (config.aimSystem ? 1 << 22 : 0) | (config.target === 'head' ? 1 << 23 : 0);
+const defaults = () => ({aimSystem:false,silentAim:false,noRecoil:false,espMaster:false,skeleton:false,distance:false,playerName:false,healthBar:false,topTracer:false,playerBox:false,fovCircle:false,target:'head',headshot:0,aimSystemTarget:'head',fovRadius:197});
+const normalize = c => ({...defaults(),...c,aimSystemTarget:c.aimSystemTarget || (c.target==='head'?'head':'neck')});
+export function controlMask(input, version=1) {
+  const c=normalize(input);
+  const target=c.target==='head' || c.target==='neck'?1:c.target==='body'?2:0;
+  const aim=(c.silentAim?1<<15:0)|(target<<16)|(c.noRecoil?1<<18:0)|((4-c.headshot/25)<<19)|(c.aimSystem?1<<22:0)|(c.aimSystemTarget==='head'?1<<23:0);
+  if(version===1)return aim;
+  // OnGUI gates the whole ESP block with x bit 0, and the bone rendering
+  // block with y bit 0. Bind functional roles rather than swapped menu labels.
+  const esp=['espMaster','distance','playerName','healthBar','topTracer','playerBox','fovCircle'].reduce((m,k,i)=>m|(c[k]?1<<i:0),0);
+  const radius=Math.max(0,Math.min(31,Math.round((c.fovRadius-50)/11.29)));
+  return aim|esp|(radius<<24)|(c.skeleton?1<<29:0);
 }
-
-const defaults = () => ({ aimSystem: false, silentAim: false, noRecoil: false, target: 'head', headshot: 0 });
 const bearer = request => /^Bearer\s+(.+)$/i.exec(request.headers.get('Authorization') || '')?.[1]?.trim() || '';
 const bytes = value => Uint8Array.from(atob(value), c => c.charCodeAt(0));
 const hex = value => [...value].map(b => b.toString(16).padStart(2, '0')).join('');
@@ -155,7 +160,7 @@ export default {
     if (request.method === 'OPTIONS') return new Response(null, { status: allowed ? 204 : 403, headers: corsHeaders });
     if (!allowed) return json({ ok: false, message: 'Origin not allowed' }, 403, corsHeaders);
 
-    if (url.pathname === '/') return json({ ok: true, name: 'DRAGON HEX Control API', version: '1.2' }, 200, corsHeaders);
+    if (url.pathname === '/') return json({ ok: true, name: 'DRAGON HEX Control API', version: '2.0' }, 200, corsHeaders);
     if (url.pathname === '/keys') return Response.redirect(`${UPSTREAM}/keys`, 302);
     if (url.pathname === '/api/auth' && request.method === 'POST') {
       const data=await request.json().catch(()=>null);
@@ -164,14 +169,14 @@ export default {
     }
     if (url.pathname === '/api/status' && request.method === 'GET') return proxy('/api/status', request, corsHeaders);
 
-    if (['/api/device-patch', '/api/runtime-config', '/api/runtime-status'].includes(url.pathname) && !env.DEVICE_CONFIG) return json({ ok: false, message: 'DEVICE_CONFIG KV binding is not configured' }, 503, corsHeaders);
+    if (['/api/device-patch', '/api/runtime-config', '/api/runtime-config-v2', '/api/runtime-status'].includes(url.pathname) && !env.DEVICE_CONFIG) return json({ ok: false, message: 'DEVICE_CONFIG KV binding is not configured' }, 503, corsHeaders);
 
     if (url.pathname === '/api/device-patch' && request.method === 'POST') {
       const data = await request.json().catch(() => null);
       const key = bearer(request);
       const auth = await authenticate(key, data?.deviceId, data?.build);
       if (!auth.ok) return json(auth.body, auth.status, corsHeaders);
-      const template = await env.DEVICE_CONFIG.get('receiver:template:v1', 'json');
+      const template = await env.DEVICE_CONFIG.get('receiver:template:v2', 'json');
       if (!template) return json({ ok: false, message: 'Receiver template is not installed' }, 503, corsHeaders);
       const token = hex(crypto.getRandomValues(new Uint8Array(32)));
       const storageKey = `user:${await digest(auth.body.key || key)}`;
@@ -179,31 +184,34 @@ export default {
       const pkg = await personalize(template, token);
       // Only Cloudflare KV holds the original access key; the patch holds a scoped
       // receiver token. Runtime reads are reauthorized against the original API.
-      await env.DEVICE_CONFIG.put(`receiver:${await digest(token)}`, JSON.stringify({ key, deviceId: data.deviceId, build: data.build, storageKey }));
+      await env.DEVICE_CONFIG.put(`receiver:${await digest(token)}`, JSON.stringify({ key, deviceId: data.deviceId, build: data.build, storageKey, protocolVersion:2 }));
       const stub=env.DEVICE_STATE.get(env.DEVICE_STATE.idFromName(storageKey));
       const activation=await stub.fetch('https://state/activate',{method:'POST',body:JSON.stringify({tokenHash:await digest(token)})});
       if (!activation.ok) throw new Error('Receiver activation failed');
       return new Response(pkg, { headers: { ...corsHeaders, 'content-type': 'application/octet-stream', 'content-disposition': 'attachment; filename="DRAGON_HEX_WEB_RECEIVER.3105"', 'cache-control': 'no-store' } });
     }
 
-    if (url.pathname === '/api/runtime-config' && request.method === 'GET') {
+    if (['/api/runtime-config','/api/runtime-config-v2'].includes(url.pathname) && request.method === 'GET') {
       const token = bearer(request);
       if (!/^[a-f0-9]{64}$/.test(token)) return json({ ok: false, message: 'Invalid receiver token' }, 401, corsHeaders);
       const receiver = await env.DEVICE_CONFIG.get(`receiver:${await digest(token)}`, 'json');
       if (!receiver) return json({ ok: false, message: 'Receiver not paired' }, 401, corsHeaders);
+      const protocolVersion=url.pathname.endsWith('-v2')?2:1;
+      if((receiver.protocolVersion || 1)!==protocolVersion)return json({ok:false,message:'Receiver version mismatch'},409,corsHeaders);
       const auth = await authenticate(receiver.key, receiver.deviceId, receiver.build);
       if (!auth.ok) return json(auth.body, auth.status, corsHeaders);
       if (!env.DEVICE_STATE) return json({ok:false,message:'Per-key control storage is unavailable'},503,corsHeaders);
       const runtimeDevice=request.headers.get('X-Dragonhex-Device') || '';
       if (!/^[A-Za-z0-9_-]{8,128}$/.test(runtimeDevice) || /^(unknown|unsupported|n-a|0+)$/i.test(runtimeDevice)) return json({ok:false,message:'Valid game device identity is required'},400,corsHeaders);
       const applied = request.headers.get('X-Dragonhex-Applied');
-      const appliedMask=/^\d{1,8}$/.test(applied || '') && Number(applied)<=0xff8000 && (Number(applied)&~0xff8000)===0 ? Number(applied) : null;
+      const allowedMask=protocolVersion===2?0x3fff807f:0xff8000;
+      const appliedMask=/^\d{1,10}$/.test(applied || '') && Number(applied)<=allowedMask && (Number(applied)&~allowedMask)===0 ? Number(applied) : null;
       const storageKey=`user:${await digest(auth.body.key || receiver.key)}`;
       const stub=env.DEVICE_STATE.get(env.DEVICE_STATE.idFromName(storageKey));
-      const runtime=await stub.fetch('https://state/runtime',{method:'POST',body:JSON.stringify({tokenHash:await digest(token),deviceHash:await digest(runtimeDevice),appliedMask})});
+      const runtime=await stub.fetch('https://state/runtime',{method:'POST',body:JSON.stringify({tokenHash:await digest(token),deviceHash:await digest(runtimeDevice),appliedMask,protocolVersion})});
       if (!runtime.ok) return json({ok:false,message:await runtime.text()},runtime.status,corsHeaders);
       const config=await runtime.json();
-      return new Response(String(controlMask(config)), { headers: { ...corsHeaders, 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' } });
+      return new Response(String(controlMask(config,protocolVersion)), { headers: { ...corsHeaders, 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' } });
     }
 
     if (url.pathname === '/api/runtime-status' && request.method === 'GET') {
@@ -215,7 +223,7 @@ export default {
       const seen = await readState(env, storageKey, 'seen');
       const config = await readState(env, storageKey, 'config') || defaults();
       const online = !!seen && Date.now() - Date.parse(seen.seenAt) < 30000;
-      return json({ ok: true, online, seenAt: seen?.seenAt || null, applied: online && seen.appliedMask === controlMask(config) }, 200, corsHeaders);
+      return json({ ok: true, online, seenAt: seen?.seenAt || null, receiverVersion:seen?.protocolVersion || 1, upgradeRequired:online && (seen.protocolVersion || 1)<2, applied: online && seen.appliedMask === controlMask(config,seen.protocolVersion || 1) }, 200, corsHeaders);
     }
 
     if (url.pathname === '/api/device-config' && !env.DEVICE_CONFIG) return json({ ok: false, message: 'DEVICE_CONFIG KV binding is not configured' }, 503, corsHeaders);
@@ -226,7 +234,7 @@ export default {
       if (!auth.ok) return json(auth.body, auth.status || 401, corsHeaders);
       const storageKey = `user:${await digest(auth.body.key || key)}`;
       const stored = await readState(env, storageKey, 'config');
-      return json({ ok: true, config: stored || defaults() }, 200, corsHeaders);
+      return json({ ok: true, config: normalize(stored || {}) }, 200, corsHeaders);
     }
 
     if (url.pathname === '/api/device-config' && request.method === 'PUT') {
@@ -238,7 +246,8 @@ export default {
       if (!auth.ok) return json(auth.body, auth.status || 401, corsHeaders);
       if (!validConfig(data.config)) return json({ ok: false, message: 'Invalid feature configuration' }, 400, corsHeaders);
       const storageKey = `user:${await digest(auth.body.key || key)}`;
-      const config = { aimSystem: data.config.aimSystem, silentAim: data.config.silentAim || false, noRecoil: data.config.noRecoil, target: data.config.target, headshot: data.config.headshot, updatedAt: new Date().toISOString() };
+      const config=normalize(Object.fromEntries([...FEATURES,'target','headshot','aimSystemTarget','fovRadius'].filter(k=>data.config[k]!==undefined).map(k=>[k,data.config[k]])));
+      config.updatedAt=new Date().toISOString();
       await writeState(env, storageKey, 'config', config);
       return json({ ok: true, config }, 200, corsHeaders);
     }
