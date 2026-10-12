@@ -1,7 +1,7 @@
 'use strict';
 
 const API_BASE = window.DRAGON_HEX_CONFIG.apiBase.replace(/\/$/, '');
-const BUILD = 'dragon-hex-control/1.0';
+let BUILD = localStorage.getItem('dragonhex.web.build') || '';
 const $ = id => document.getElementById(id);
 
 const state = {
@@ -67,7 +67,7 @@ async function loadDashboard() {
   // This is the feature-control contract required by the web panel and the device patch.
   // The current Worker returns 404 until that backend/device integration is deployed.
   try {
-    const data = await request(`/api/device-config?deviceId=${encodeURIComponent(state.deviceId)}`, { headers: { Authorization: `Bearer ${state.key}` } });
+    const data = await request(`/api/device-config?deviceId=${encodeURIComponent(state.deviceId)}&build=${encodeURIComponent(BUILD)}`, { headers: { Authorization: `Bearer ${state.key}` } });
     state.config = { ...state.config, ...data.config };
     state.controlSupported = true;
     $('sync-label').textContent = 'API CONNECTED';
@@ -94,6 +94,8 @@ $('login-form').onsubmit = async event => {
   event.preventDefault();
   const button = $('login-button');
   const feedback = $('login-feedback');
+  BUILD = $('build-number').value.trim();
+  localStorage.setItem('dragonhex.web.build', BUILD);
   state.deviceId = $('device-id').value.trim();
   localStorage.setItem('dragonhex.web.device', state.deviceId);
   state.config = { aimSystem: false, noRecoil: false, target: 'head', headshot: 0 };
@@ -138,7 +140,7 @@ $('save').onclick = async () => {
     await request('/api/device-config', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${state.key}` },
-      body: JSON.stringify({ deviceId: state.deviceId, config: state.config })
+      body: JSON.stringify({ deviceId: state.deviceId, build: BUILD, config: state.config })
     });
     $('save-status').textContent = 'SAVED TO API';
   } catch (error) {
@@ -157,6 +159,7 @@ $('logout').onclick = () => {
 };
 
 $('device-id').value = state.deviceId;
+$('build-number').value = BUILD;
 setControlsEnabled(false);
 probe();
 

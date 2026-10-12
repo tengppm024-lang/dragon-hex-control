@@ -31,7 +31,9 @@
         <div class="key-field"><span>›</span><input id="key" name="key" type="password" autocomplete="off" spellcheck="false" placeholder="กรอกคีย์ของคุณ" required><button type="button" id="show-key" aria-label="แสดงหรือซ่อนคีย์">SHOW</button></div>
         <label for="device-id">DEVICE ID</label>
         <div class="key-field"><input id="device-id" name="deviceId" autocomplete="off" spellcheck="false" maxlength="128" pattern="[A-Za-z0-9_-]+" required placeholder="รหัสอุปกรณ์เดียวกับในแพตช์"></div>
-        <p>ใช้ Device ID เดียวกับแพตช์เพื่ออ่านค่าชุดเดียวกัน การบันทึกบนเว็บยังไม่ยืนยันว่าอุปกรณ์นำค่าไปใช้แล้ว</p>
+        <label for="build-number">APP BUILD</label>
+        <div class="key-field"><input id="build-number" name="build" autocomplete="off" inputmode="numeric" maxlength="12" pattern="[0-9]{1,12}" required placeholder="หมายเลข Build ที่แสดงในแอป"></div>
+        <p>ใช้ Device ID และหมายเลข Build เดียวกับแอป การบันทึกบนเว็บยังไม่ยืนยันว่าอุปกรณ์นำค่าไปใช้แล้ว</p>
         <button class="primary" id="login-button" type="submit"><span>CONNECT SYSTEM</span><b>→</b></button>
         <p class="feedback" id="login-feedback" role="status" aria-live="polite"></p>
         <a class="key-link" href="https://dhx.dragonhex.workers.dev/keys" target="_blank" rel="noopener">เปิดระบบสร้างคีย์ ↗</a>

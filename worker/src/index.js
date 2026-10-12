@@ -31,7 +31,8 @@ async function digest(value) {
   return [...new Uint8Array(hash)].map(byte => byte.toString(16).padStart(2, '0')).join('');
 }
 
-async function authenticate(key, deviceId, build = 'dragon-hex-control/1.0') {
+async function authenticate(key, deviceId, build = '') {
+  if (typeof build !== 'string' || !/^\d{1,12}$/.test(build)) return { ok: false, status: 400, body: { ok: false, message: 'App build number is required' } };
   if (typeof key !== 'string' || !key || key.length > 512 || typeof deviceId !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(deviceId)) return { ok: false, status: 400, body: { ok: false, message: 'Valid key and deviceId are required' } };
   const response = await fetch(`${UPSTREAM}/api/auth`, {
     method: 'POST',
@@ -82,7 +83,7 @@ export default {
     if (url.pathname === '/api/device-config' && request.method === 'GET') {
       const key = request.headers.get('Authorization')?.replace(/^Bearer\s+/i, '').trim() || '';
       const deviceId = url.searchParams.get('deviceId')?.trim() || '';
-      const auth = await authenticate(key, deviceId);
+      const auth = await authenticate(key, deviceId, url.searchParams.get('build') || '');
       if (!auth.ok) return json(auth.body, auth.status || 401, corsHeaders);
       const storageKey = `device:${await digest(`${key}:${deviceId}`)}`;
       const stored = await env.DEVICE_CONFIG.get(storageKey, 'json');
@@ -94,7 +95,7 @@ export default {
       if (!data) return json({ ok: false, message: 'Invalid JSON' }, 400, corsHeaders);
       const key = request.headers.get('Authorization')?.replace(/^Bearer\s+/i, '').trim() || '';
       const deviceId = String(data.deviceId || '').trim();
-      const auth = await authenticate(key, deviceId);
+      const auth = await authenticate(key, deviceId, data.build);
       if (!auth.ok) return json(auth.body, auth.status || 401, corsHeaders);
       if (!validConfig(data.config)) return json({ ok: false, message: 'Invalid feature configuration' }, 400, corsHeaders);
       const storageKey = `device:${await digest(`${key}:${deviceId}`)}`;
