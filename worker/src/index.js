@@ -160,7 +160,7 @@ export default {
     if (request.method === 'OPTIONS') return new Response(null, { status: allowed ? 204 : 403, headers: corsHeaders });
     if (!allowed) return json({ ok: false, message: 'Origin not allowed' }, 403, corsHeaders);
 
-    if (url.pathname === '/') return json({ ok: true, name: 'DRAGON HEX Control API', version: '2.0' }, 200, corsHeaders);
+    if (url.pathname === '/') return json({ ok: true, name: 'DRAGON HEX Control API', version: '2.1' }, 200, corsHeaders);
     if (url.pathname === '/keys') return Response.redirect(`${UPSTREAM}/keys`, 302);
     if (url.pathname === '/api/auth' && request.method === 'POST') {
       const data=await request.json().catch(()=>null);
@@ -188,7 +188,7 @@ export default {
       const stub=env.DEVICE_STATE.get(env.DEVICE_STATE.idFromName(storageKey));
       const activation=await stub.fetch('https://state/activate',{method:'POST',body:JSON.stringify({tokenHash:await digest(token)})});
       if (!activation.ok) throw new Error('Receiver activation failed');
-      return new Response(pkg, { headers: { ...corsHeaders, 'content-type': 'application/octet-stream', 'content-disposition': 'attachment; filename="DRAGON_HEX_WEB_RECEIVER.3105"', 'cache-control': 'no-store' } });
+      return new Response(pkg, { headers: { ...corsHeaders, 'content-type': 'application/octet-stream', 'content-disposition': 'attachment; filename="DRAGON_HEX_READBACK_FIX.3105"', 'cache-control': 'no-store' } });
     }
 
     if (['/api/runtime-config','/api/runtime-config-v2'].includes(url.pathname) && request.method === 'GET') {

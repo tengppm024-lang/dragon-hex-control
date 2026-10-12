@@ -126,7 +126,7 @@ $('download-patch').onclick = async () => {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = 'DRAGON_HEX_WEB_RECEIVER.3105';
+    link.download = 'DRAGON_HEX_READBACK_FIX.3105';
     document.body.append(link);link.click();link.remove();
     setTimeout(() => URL.revokeObjectURL(url), 60000);
     $('patch-feedback').textContent = 'นำเข้าไฟล์นี้แทนแพตช์เดิม แล้วเปิดเกม หน้าเว็บจะแสดงสถานะเมื่อเกมส่งคำตอบกลับ';
