@@ -57,9 +57,12 @@ async function proxy(path, request, corsHeaders) {
   const response = await fetch(upstreamURL, {
     method: request.method,
     headers: { accept: 'application/json', 'content-type': request.headers.get('content-type') || 'application/json' },
-    body: request.method === 'GET' || request.method === 'HEAD' ? undefined : request.body
+    body: request.method === 'GET' || request.method === 'HEAD' ? undefined : request.body,
+    signal: AbortSignal.timeout(10000)
   });
-  return new Response(response.body, { status: response.status, headers: { 'content-type': response.headers.get('content-type') || 'application/json; charset=utf-8', ...corsHeaders } });
+  const body = await response.json().catch(() => null);
+  if (!body) return json({ ok: false, message: 'Key API returned an invalid response' }, 502, corsHeaders);
+  return json(body, response.status, corsHeaders);
 }
 
 export default {
