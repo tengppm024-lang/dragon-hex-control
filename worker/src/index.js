@@ -22,7 +22,7 @@ export class DeviceState {
         if (!owner || owner.tokenHash !== data.tokenHash) return new Response('Receiver replaced', {status:409});
         if (owner.deviceHash && owner.deviceHash !== data.deviceHash) return new Response('Key already connected to another game device', {status:409});
         if (!owner.deviceHash) await tx.put('receiver', {...owner,deviceHash:data.deviceHash});
-        if (data.appliedMask !== null) await tx.put('seen', {seenAt:new Date().toISOString(),appliedMask:data.appliedMask,protocolVersion:data.protocolVersion || 1});
+        if (data.appliedMask !== null) await tx.put('seen', {seenAt:new Date().toISOString(),appliedMask:data.appliedMask,protocolVersion:data.protocolVersion || 1,readback:data.readback===true,hookFlags:data.hookFlags ?? null});
         return new Response(JSON.stringify(await tx.get('config') || defaults()), {headers:{'content-type':'application/json'}});
       });
     }
@@ -204,11 +204,13 @@ export default {
       const runtimeDevice=request.headers.get('X-Dragonhex-Device') || '';
       if (!/^[A-Za-z0-9_-]{8,128}$/.test(runtimeDevice) || /^(unknown|unsupported|n-a|0+)$/i.test(runtimeDevice)) return json({ok:false,message:'Valid game device identity is required'},400,corsHeaders);
       const applied = request.headers.get('X-Dragonhex-Applied');
+      const hooks=request.headers.get('X-Dragonhex-Hooks');
+      const hookFlags=/^[0-7]$/.test(hooks || '')?Number(hooks):null;
       const allowedMask=protocolVersion===2?0x3fff807f:0xff8000;
       const appliedMask=/^\d{1,10}$/.test(applied || '') && Number(applied)<=allowedMask && (Number(applied)&~allowedMask)===0 ? Number(applied) : null;
       const storageKey=`user:${await digest(auth.body.key || receiver.key)}`;
       const stub=env.DEVICE_STATE.get(env.DEVICE_STATE.idFromName(storageKey));
-      const runtime=await stub.fetch('https://state/runtime',{method:'POST',body:JSON.stringify({tokenHash:await digest(token),deviceHash:await digest(runtimeDevice),appliedMask,protocolVersion})});
+      const runtime=await stub.fetch('https://state/runtime',{method:'POST',body:JSON.stringify({tokenHash:await digest(token),deviceHash:await digest(runtimeDevice),appliedMask,protocolVersion,readback:protocolVersion===2 && hookFlags!==null,hookFlags})});
       if (!runtime.ok) return json({ok:false,message:await runtime.text()},runtime.status,corsHeaders);
       const config=await runtime.json();
       return new Response(String(controlMask(config,protocolVersion)), { headers: { ...corsHeaders, 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' } });
@@ -223,7 +225,7 @@ export default {
       const seen = await readState(env, storageKey, 'seen');
       const config = await readState(env, storageKey, 'config') || defaults();
       const online = !!seen && Date.now() - Date.parse(seen.seenAt) < 30000;
-      return json({ ok: true, online, seenAt: seen?.seenAt || null, receiverVersion:seen?.protocolVersion || 1, upgradeRequired:online && (seen.protocolVersion || 1)<2, applied: online && seen.appliedMask === controlMask(config,seen.protocolVersion || 1) }, 200, corsHeaders);
+      return json({ ok: true, online, seenAt: seen?.seenAt || null, receiverVersion:seen?.protocolVersion || 1, upgradeRequired:online && !seen.readback, readback:seen?.readback===true,hookFlags:seen?.hookFlags ?? null, applied: online && seen?.readback===true && seen.appliedMask === controlMask(config,seen.protocolVersion || 1) }, 200, corsHeaders);
     }
 
     if (url.pathname === '/api/device-config' && !env.DEVICE_CONFIG) return json({ ok: false, message: 'DEVICE_CONFIG KV binding is not configured' }, 503, corsHeaders);

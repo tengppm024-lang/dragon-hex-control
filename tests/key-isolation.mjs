@@ -33,11 +33,12 @@ assert.equal((await put('KEY_A',{...config,headshot:'75'},'same-browser')).statu
 console.log('PASS: different keys remain isolated with identical browser IDs; same key has one channel across browsers; strict validation');
 const tokenA='a'.repeat(64),tokenB='b'.repeat(64),newToken='c'.repeat(64);
 async function activate(key,token){const id='user:'+await sha(key);await kv.put('receiver:'+await sha(token),JSON.stringify({key,build:'22',storageKey:'untrusted-client-value'}));return env.DEVICE_STATE.get(id).fetch('https://state/activate',{method:'POST',body:JSON.stringify({tokenHash:await sha(token)})});}
-async function poll(token,device='phone-one-123456',applied=mod.controlMask(config),version=1){return worker.fetch(new Request('https://example.com/api/runtime-config'+(version===2?'-v2':''),{headers:{Authorization:'Bearer '+token,'X-Dragonhex-Device':device,'X-Dragonhex-Applied':String(applied)}}),env);}
+async function poll(token,device='phone-one-123456',applied=mod.controlMask(config),version=1){return worker.fetch(new Request('https://example.com/api/runtime-config'+(version===2?'-v2':''),{headers:{Authorization:'Bearer '+token,'X-Dragonhex-Device':device,'X-Dragonhex-Applied':String(applied),...(version===2?{'X-Dragonhex-Hooks':'0'}:{})}}),env);}
 await activate('KEY_A',tokenA);await activate('KEY_B',tokenB);
 assert.equal(await (await poll(tokenA)).text(),String(mod.controlMask(config)));
 assert.equal(await (await poll(tokenB,'phone-two-123456')).text(),String(mod.controlMask(configB)));
-assert.equal((await (await worker.fetch(req('/api/runtime-status?build=22&deviceId=other','KEY_A'),env)).json()).applied,true);
+const legacyStatus=await (await worker.fetch(req('/api/runtime-status?build=22&deviceId=other','KEY_A'),env)).json();
+assert.equal(legacyStatus.applied,false);assert.equal(legacyStatus.upgradeRequired,true);
 assert.equal((await poll(tokenA,'second-phone-123456')).status,409);
 await activate('KEY_A',newToken);assert.equal((await poll(tokenA)).status,409);
 const races=await Promise.all([poll(newToken,'race-phone-one-123456'),poll(newToken,'race-phone-two-123456')]);
@@ -64,6 +65,10 @@ if(process.env.DHX_RECEIVER_TEMPLATE){
   const plain=new Uint8Array(await crypto.subtle.decrypt({name:'AES-GCM',iv:enc.slice(0,12),additionalData:new TextEncoder().encode(template.aad)},aes,enc.slice(12)));
   const newToken=new TextDecoder().decode(plain.slice(template.tokenOffset,template.tokenOffset+64));
   assert.equal((await poll(newToken,'download-phone-123456',mod.controlMask(config,2),2)).status,200);
+  const readbackStatus=await (await worker.fetch(req('/api/runtime-status?build=22','KEY_A'),env)).json();
+  assert.equal(readbackStatus.readback,true);assert.equal(readbackStatus.applied,true);assert.equal(readbackStatus.hookFlags,0);
+  await poll(newToken,'download-phone-123456',0,2);
+  assert.equal((await (await worker.fetch(req('/api/runtime-status?build=22','KEY_A'),env)).json()).applied,false);
   assert.equal((await poll(tokenA)).status,409);
   assert.equal((await poll(tokenB,'phone-two-123456')).status,200);
   assert.equal((await poll(newToken,'other-copy-phone-123456',mod.controlMask(config,2),2)).status,409);

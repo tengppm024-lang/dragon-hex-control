@@ -101,9 +101,10 @@ async function refreshRuntime() {
   try {
     const data = await request(`/api/runtime-status?deviceId=${encodeURIComponent(state.deviceId)}&build=${encodeURIComponent(BUILD)}`, { headers: { Authorization: `Bearer ${state.key}` } });
     if(state.key!==sessionKey)return;
-    if(data.upgradeRequired){$('runtime-state').textContent='ดาวน์โหลด 3105 รุ่นใหม่เพื่อใช้ ESP และ FOV';$('sync-label').textContent='UPDATE RECEIVER';return;}
+    if(data.upgradeRequired){$('runtime-state').textContent='ตัวรับเดิมยืนยันได้เฉพาะการรับค่า ดาวน์โหลดรุ่นตรวจค่าจริง';$('sync-label').textContent='UPDATE RECEIVER';return;}
     $('runtime-state').textContent = data.online ? (data.applied ? 'เกมรับและใช้ค่าล่าสุดแล้ว' : 'เกมเชื่อมต่อแล้ว กำลังรอใช้ค่าล่าสุด') : 'ยังไม่มีการตอบกลับจากเกม';
-    $('sync-label').textContent = data.online ? (data.applied ? 'GAME ACKNOWLEDGED' : 'GAME CONNECTED') : 'WAITING FOR GAME';
+    $('sync-label').textContent = data.online ? (data.applied ? 'GAME STATE CONFIRMED' : 'STATE NOT MATCHED') : 'WAITING FOR GAME';
+    if(data.online && data.applied){const h=data.hookFlags || 0;$('runtime-state').textContent=`อ่านค่ากลับตรงกับเว็บ · โค้ดเกม AIM ${(h&3)?'ถูกเรียกแล้ว':'ยังไม่ถูกเรียก'} / RECOIL ${(h&4)?'ถูกเรียกแล้ว':'ยังไม่ถูกเรียก'}`;}
   } catch (error) {
     if(state.key!==sessionKey)return;
     if([401,403].includes(error.status)){endSession(error.message);return;}
