@@ -101,7 +101,7 @@ async function refreshRuntime() {
   try {
     const data = await request(`/api/runtime-status?deviceId=${encodeURIComponent(state.deviceId)}&build=${encodeURIComponent(BUILD)}`, { headers: { Authorization: `Bearer ${state.key}` } });
     if(state.key!==sessionKey)return;
-    if(data.upgradeRequired){$('runtime-state').textContent='ตัวรับเดิมยืนยันได้เฉพาะการรับค่า ดาวน์โหลดรุ่นตรวจค่าจริง';$('sync-label').textContent='UPDATE RECEIVER';return;}
+    if(data.upgradeRequired){$('runtime-state').textContent='ตัวรับเดิมยืนยันได้เฉพาะการรับค่า เปิดตัวรับรุ่นใหม่จากรายการแพตช์ใน IPA';$('sync-label').textContent='UPDATE RECEIVER';return;}
     $('runtime-state').textContent = data.online ? (data.applied ? 'เกมรับและใช้ค่าล่าสุดแล้ว' : 'เกมเชื่อมต่อแล้ว กำลังรอใช้ค่าล่าสุด') : 'ยังไม่มีการตอบกลับจากเกม';
     $('sync-label').textContent = data.online ? (data.applied ? 'GAME STATE CONFIRMED' : 'STATE NOT MATCHED') : 'WAITING FOR GAME';
     if(data.online && data.applied){const h=data.hookFlags || 0;$('runtime-state').textContent=`อ่านค่ากลับตรงกับเว็บ · โค้ดเกม AIM ${(h&3)?'ถูกเรียกแล้ว':'ยังไม่ถูกเรียก'} / RECOIL ${(h&4)?'ถูกเรียกแล้ว':'ยังไม่ถูกเรียก'}`;}
@@ -112,27 +112,6 @@ async function refreshRuntime() {
   }
 }
 
-$('download-patch').onclick = async () => {
-  const sessionKey=state.key;
-  const button = $('download-patch');
-  button.disabled = true;
-  $('patch-feedback').textContent = 'กำลังสร้างไฟล์ที่จับคู่กับคีย์นี้…';
-  try {
-    const response = await fetch(`${API_BASE}/api/device-patch`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${state.key}` }, body: JSON.stringify({ deviceId: state.deviceId, build: BUILD }), signal: AbortSignal.timeout(20000) });
-    if(state.key!==sessionKey)return;
-    if (!response.ok) { const data = await response.json().catch(() => ({})); if([401,403].includes(response.status))endSession(data.message || 'คีย์หมดอายุ'); throw new Error(data.message || `HTTP ${response.status}`); }
-    const blob = await response.blob();
-    if(state.key!==sessionKey)return;
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = 'DRAGON_HEX_READBACK_FIX.3105';
-    document.body.append(link);link.click();link.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 60000);
-    $('patch-feedback').textContent = 'นำเข้าไฟล์นี้แทนแพตช์เดิม แล้วเปิดเกม หน้าเว็บจะแสดงสถานะเมื่อเกมส่งคำตอบกลับ';
-  } catch (error) { if(state.key===sessionKey)$('patch-feedback').textContent = error.message; }
-  finally { button.disabled = false; }
-};
 setInterval(refreshRuntime, 5000);
 function updateExpiry(){
   if(!state.key)return;
