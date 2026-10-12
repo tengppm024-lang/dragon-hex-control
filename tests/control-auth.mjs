@@ -1,0 +1,14 @@
+import fs from 'node:fs';
+import vm from 'node:vm';
+import assert from 'node:assert/strict';
+const source=fs.readFileSync(new URL('../worker/control-auth-snippet.js',import.meta.url),'utf8');
+const records=new Map();
+const active={key:'A',active:true,deviceId:'ipa-device-only',activatedAt:'2026-01-01',expiresAt:new Date(Date.now()+60000).toISOString()};
+records.set('A',active);records.set('B',{...active,key:'B',expiresAt:new Date(Date.now()-1000).toISOString()});records.set('C',{...active,key:'C',banned:true});records.set('D',{key:'D',active:true});
+const context={Date,String,readBody:r=>r.json(),json:(b,s)=>new Response(JSON.stringify(b),{status:s}),getMaintenance:async()=>({}),maintenanceApplies:()=>false,buildFromRequest:()=>22,getKey:async(e,k)=>records.get(k),isExpired:r=>Date.parse(r.expiresAt)<=Date.now(),expiryTime:r=>Date.parse(r.expiresAt)};
+vm.createContext(context);vm.runInContext(source,context);
+const before=JSON.stringify(active);
+const call=k=>context.authenticateControl({},new Request('https://test/api/control-auth',{method:'POST',body:JSON.stringify({key:k,deviceId:'different-web-device'})}),new URL('https://test/api/control-auth'));
+assert.equal((await call('A')).status,200);assert.equal(JSON.stringify(active),before);
+assert.equal((await call('B')).status,403);assert.equal((await call('C')).status,401);assert.equal((await call('D')).status,403);assert.equal((await call('missing')).status,401);
+console.log('PASS: IPA-bound key works on web without rebinding or extending expiry; expired/banned/unactivated/unknown keys rejected');

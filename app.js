@@ -6,6 +6,7 @@ const $ = id => document.getElementById(id);
 
 const state = {
   key: '',
+  expiresAt: null,
   deviceId: localStorage.getItem('dragonhex.web.device') || crypto.randomUUID(),
   config: { aimSystem: false, silentAim: false, noRecoil: false, target: 'head', headshot: 0 },
   controlSupported: false
@@ -58,7 +59,9 @@ async function authenticate(key) {
 }
 
 async function loadDashboard() {
+  const sessionKey=state.key;
   const status = await request(`/api/status?build=${encodeURIComponent(BUILD)}`).catch(() => null);
+  if(state.key!==sessionKey)return;
   if (status?.maintenance) {
     $('maintenance').hidden = false;
     $('maintenance').textContent = `MAINTENANCE — ${status.message || 'ระบบกำลังปิดปรับปรุง'}`;
@@ -67,11 +70,14 @@ async function loadDashboard() {
   // Load configuration for the same device identity embedded in its downloaded patch.
   try {
     const data = await request(`/api/device-config?deviceId=${encodeURIComponent(state.deviceId)}&build=${encodeURIComponent(BUILD)}`, { headers: { Authorization: `Bearer ${state.key}` } });
+    if(state.key!==sessionKey)return;
     state.config = { ...state.config, ...data.config };
     state.controlSupported = true;
     $('sync-label').textContent = 'WAITING FOR GAME';
     $('control-warning').hidden = true;
   } catch (error) {
+    if(state.key!==sessionKey)return;
+    if([401,403].includes(error.status)){endSession(error.message);return;}
     state.controlSupported = false;
     $('sync-label').textContent = error.status === 404 ? 'API UPDATE NEEDED' : 'UNAVAILABLE';
     $('control-warning').hidden = false;
@@ -86,23 +92,30 @@ async function loadDashboard() {
 
 async function refreshRuntime() {
   if (!state.key || $('dashboard').hidden) return;
+  const sessionKey=state.key;
   try {
     const data = await request(`/api/runtime-status?deviceId=${encodeURIComponent(state.deviceId)}&build=${encodeURIComponent(BUILD)}`, { headers: { Authorization: `Bearer ${state.key}` } });
+    if(state.key!==sessionKey)return;
     $('runtime-state').textContent = data.online ? (data.applied ? 'เกมรับและใช้ค่าล่าสุดแล้ว' : 'เกมเชื่อมต่อแล้ว กำลังรอใช้ค่าล่าสุด') : 'ยังไม่มีการตอบกลับจากเกม';
     $('sync-label').textContent = data.online ? (data.applied ? 'GAME ACKNOWLEDGED' : 'GAME CONNECTED') : 'WAITING FOR GAME';
-  } catch {
+  } catch (error) {
+    if(state.key!==sessionKey)return;
+    if([401,403].includes(error.status)){endSession(error.message);return;}
     $('runtime-state').textContent = 'ตรวจสอบการเชื่อมเกมไม่ได้';
   }
 }
 
 $('download-patch').onclick = async () => {
+  const sessionKey=state.key;
   const button = $('download-patch');
   button.disabled = true;
   $('patch-feedback').textContent = 'กำลังสร้างไฟล์ที่จับคู่กับคีย์นี้…';
   try {
     const response = await fetch(`${API_BASE}/api/device-patch`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${state.key}` }, body: JSON.stringify({ deviceId: state.deviceId, build: BUILD }), signal: AbortSignal.timeout(20000) });
-    if (!response.ok) { const data = await response.json().catch(() => ({})); throw new Error(data.message || `HTTP ${response.status}`); }
+    if(state.key!==sessionKey)return;
+    if (!response.ok) { const data = await response.json().catch(() => ({})); if([401,403].includes(response.status))endSession(data.message || 'คีย์หมดอายุ'); throw new Error(data.message || `HTTP ${response.status}`); }
     const blob = await response.blob();
+    if(state.key!==sessionKey)return;
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
@@ -110,10 +123,19 @@ $('download-patch').onclick = async () => {
     document.body.append(link);link.click();link.remove();
     setTimeout(() => URL.revokeObjectURL(url), 60000);
     $('patch-feedback').textContent = 'นำเข้าไฟล์นี้แทนแพตช์เดิม แล้วเปิดเกม หน้าเว็บจะแสดงสถานะเมื่อเกมส่งคำตอบกลับ';
-  } catch (error) { $('patch-feedback').textContent = error.message; }
+  } catch (error) { if(state.key===sessionKey)$('patch-feedback').textContent = error.message; }
   finally { button.disabled = false; }
 };
 setInterval(refreshRuntime, 5000);
+setInterval(()=>{if(state.key && state.expiresAt && Date.now()>=Date.parse(state.expiresAt))endSession('คีย์หมดอายุ กรุณาเข้าสู่ระบบด้วยคีย์ที่ยังใช้งานได้');},1000);
+
+function endSession(message='') {
+  state.key='';state.expiresAt=null;state.controlSupported=false;
+  state.config={aimSystem:false,silentAim:false,noRecoil:false,target:'head',headshot:0};
+  $('key').value='';$('dashboard').hidden=true;$('login-view').hidden=false;
+  $('login-feedback').textContent=message;
+  setControlsEnabled(false);renderConfig();
+}
 
 $('show-key').onclick = () => {
   const input = $('key');
@@ -135,8 +157,9 @@ $('login-form').onsubmit = async event => {
   try {
     const auth = await authenticate(state.key);
     if (!auth.valid) throw new Error(auth.message || 'คีย์ไม่ถูกต้อง');
+    state.expiresAt=auth.expiresAt || null;
     $('key-status').textContent = auth.expiresAt ? `ACTIVE · ${new Date(auth.expiresAt).toLocaleDateString('th-TH')}` : 'ACTIVE';
-    $('device-label').textContent = state.deviceId.slice(0, 8).toUpperCase();
+    $('device-label').textContent = '1 KEY · 1 USER';
     $('login-view').hidden = true;
     $('dashboard').hidden = false;
     feedback.textContent = '';
@@ -160,6 +183,7 @@ document.querySelectorAll('[data-headshot]').forEach(button => {
 });
 
 $('save').onclick = async () => {
+  const sessionKey=state.key;
   const button = $('save');
   button.disabled = true;
   $('save-status').textContent = 'SYNCING…';
@@ -169,9 +193,12 @@ $('save').onclick = async () => {
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${state.key}` },
       body: JSON.stringify({ deviceId: state.deviceId, build: BUILD, config: state.config })
     });
+    if(state.key!==sessionKey)return;
     $('save-status').textContent = 'SAVED TO API';
     await refreshRuntime();
   } catch (error) {
+    if(state.key!==sessionKey)return;
+    if([401,403].includes(error.status)){endSession(error.message);return;}
     $('save-status').textContent = `SYNC FAILED · ${error.message}`;
   } finally {
     button.disabled = !state.controlSupported || !$('maintenance').hidden;
@@ -179,11 +206,7 @@ $('save').onclick = async () => {
 };
 
 $('logout').onclick = () => {
-  state.key = '';
-  $('key').value = '';
-  $('dashboard').hidden = true;
-  $('login-view').hidden = false;
-  setControlsEnabled(false);
+  endSession();
 };
 
 setControlsEnabled(false);

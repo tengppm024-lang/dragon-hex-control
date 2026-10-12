@@ -7,6 +7,25 @@ export class DeviceState {
   constructor(state) { this.storage = state.storage; }
   async fetch(request) {
     const field = new URL(request.url).pathname.slice(1);
+    if (field === 'activate' && request.method === 'POST') {
+      const {tokenHash} = await request.json();
+      await this.storage.transaction(async tx => {
+        await tx.put('receiver', {tokenHash, deviceHash:null});
+        await tx.delete('seen');
+      });
+      return new Response(null, {status:204});
+    }
+    if (field === 'runtime' && request.method === 'POST') {
+      const data = await request.json();
+      return this.storage.transaction(async tx => {
+        const owner = await tx.get('receiver');
+        if (!owner || owner.tokenHash !== data.tokenHash) return new Response('Receiver replaced', {status:409});
+        if (owner.deviceHash && owner.deviceHash !== data.deviceHash) return new Response('Key already connected to another game device', {status:409});
+        if (!owner.deviceHash) await tx.put('receiver', {...owner,deviceHash:data.deviceHash});
+        if (data.appliedMask !== null) await tx.put('seen', {seenAt:new Date().toISOString(),appliedMask:data.appliedMask});
+        return new Response(JSON.stringify(await tx.get('config') || defaults()), {headers:{'content-type':'application/json'}});
+      });
+    }
     if (!['config', 'seen'].includes(field)) return new Response('Not found', {status:404});
     if (request.method === 'PUT') {
       await this.storage.put(field, await request.json());
@@ -65,15 +84,15 @@ async function digest(value) {
 
 async function authenticate(key, deviceId, build = '') {
   if (typeof build !== 'string' || !/^\d{1,12}$/.test(build)) return { ok: false, status: 400, body: { ok: false, message: 'App build number is required' } };
-  if (typeof key !== 'string' || !key || key.length > 512 || typeof deviceId !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(deviceId)) return { ok: false, status: 400, body: { ok: false, message: 'Valid key and deviceId are required' } };
-  const response = await fetch(`${UPSTREAM}/api/auth`, {
+  if (typeof key !== 'string' || !key || key.length > 512) return { ok: false, status: 400, body: { ok: false, message: 'Valid key is required' } };
+  const response = await fetch(`${UPSTREAM}/api/control-auth`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', accept: 'application/json' },
-    body: JSON.stringify({ key, deviceId, build }),
+    body: JSON.stringify({ key, build }),
     signal: AbortSignal.timeout(10000)
   });
   const body = await response.json().catch(() => ({ valid: false, message: 'Invalid upstream response' }));
-  const ok = response.ok && body.valid === true;
+  const ok = response.ok && body.valid === true && body.banned !== true;
   return { ok, status: ok ? response.status : (response.ok ? 401 : response.status), body };
 }
 
@@ -136,9 +155,13 @@ export default {
     if (request.method === 'OPTIONS') return new Response(null, { status: allowed ? 204 : 403, headers: corsHeaders });
     if (!allowed) return json({ ok: false, message: 'Origin not allowed' }, 403, corsHeaders);
 
-    if (url.pathname === '/') return json({ ok: true, name: 'DRAGON HEX Control API', version: '1.1' }, 200, corsHeaders);
+    if (url.pathname === '/') return json({ ok: true, name: 'DRAGON HEX Control API', version: '1.2' }, 200, corsHeaders);
     if (url.pathname === '/keys') return Response.redirect(`${UPSTREAM}/keys`, 302);
-    if (url.pathname === '/api/auth' && request.method === 'POST') return proxy('/api/auth', request, corsHeaders);
+    if (url.pathname === '/api/auth' && request.method === 'POST') {
+      const data=await request.json().catch(()=>null);
+      const auth=await authenticate(data?.key?.trim(), null, data?.build);
+      return json(auth.body,auth.status,corsHeaders);
+    }
     if (url.pathname === '/api/status' && request.method === 'GET') return proxy('/api/status', request, corsHeaders);
 
     if (['/api/device-patch', '/api/runtime-config', '/api/runtime-status'].includes(url.pathname) && !env.DEVICE_CONFIG) return json({ ok: false, message: 'DEVICE_CONFIG KV binding is not configured' }, 503, corsHeaders);
@@ -151,11 +174,15 @@ export default {
       const template = await env.DEVICE_CONFIG.get('receiver:template:v1', 'json');
       if (!template) return json({ ok: false, message: 'Receiver template is not installed' }, 503, corsHeaders);
       const token = hex(crypto.getRandomValues(new Uint8Array(32)));
-      const storageKey = `device:${await digest(`${key}:${data.deviceId}`)}`;
+      const storageKey = `user:${await digest(auth.body.key || key)}`;
+      if (!env.DEVICE_STATE) return json({ok:false,message:'Per-key control storage is unavailable'},503,corsHeaders);
       const pkg = await personalize(template, token);
       // Only Cloudflare KV holds the original access key; the patch holds a scoped
       // receiver token. Runtime reads are reauthorized against the original API.
       await env.DEVICE_CONFIG.put(`receiver:${await digest(token)}`, JSON.stringify({ key, deviceId: data.deviceId, build: data.build, storageKey }));
+      const stub=env.DEVICE_STATE.get(env.DEVICE_STATE.idFromName(storageKey));
+      const activation=await stub.fetch('https://state/activate',{method:'POST',body:JSON.stringify({tokenHash:await digest(token)})});
+      if (!activation.ok) throw new Error('Receiver activation failed');
       return new Response(pkg, { headers: { ...corsHeaders, 'content-type': 'application/octet-stream', 'content-disposition': 'attachment; filename="DRAGON_HEX_WEB_RECEIVER.3105"', 'cache-control': 'no-store' } });
     }
 
@@ -166,11 +193,16 @@ export default {
       if (!receiver) return json({ ok: false, message: 'Receiver not paired' }, 401, corsHeaders);
       const auth = await authenticate(receiver.key, receiver.deviceId, receiver.build);
       if (!auth.ok) return json(auth.body, auth.status, corsHeaders);
-      const config = await readState(env, receiver.storageKey, 'config') || defaults();
+      if (!env.DEVICE_STATE) return json({ok:false,message:'Per-key control storage is unavailable'},503,corsHeaders);
+      const runtimeDevice=request.headers.get('X-Dragonhex-Device') || '';
+      if (!/^[A-Za-z0-9_-]{8,128}$/.test(runtimeDevice) || /^(unknown|unsupported|n-a|0+)$/i.test(runtimeDevice)) return json({ok:false,message:'Valid game device identity is required'},400,corsHeaders);
       const applied = request.headers.get('X-Dragonhex-Applied');
-      if (/^\d{1,8}$/.test(applied || '') && Number(applied) <= 0xff8000 && (Number(applied) & ~0xff8000) === 0) {
-        await writeState(env, receiver.storageKey, 'seen', { seenAt: new Date().toISOString(), appliedMask: Number(applied) });
-      }
+      const appliedMask=/^\d{1,8}$/.test(applied || '') && Number(applied)<=0xff8000 && (Number(applied)&~0xff8000)===0 ? Number(applied) : null;
+      const storageKey=`user:${await digest(auth.body.key || receiver.key)}`;
+      const stub=env.DEVICE_STATE.get(env.DEVICE_STATE.idFromName(storageKey));
+      const runtime=await stub.fetch('https://state/runtime',{method:'POST',body:JSON.stringify({tokenHash:await digest(token),deviceHash:await digest(runtimeDevice),appliedMask})});
+      if (!runtime.ok) return json({ok:false,message:await runtime.text()},runtime.status,corsHeaders);
+      const config=await runtime.json();
       return new Response(String(controlMask(config)), { headers: { ...corsHeaders, 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' } });
     }
 
@@ -179,7 +211,7 @@ export default {
       const deviceId = url.searchParams.get('deviceId') || '';
       const auth = await authenticate(key, deviceId, url.searchParams.get('build') || '');
       if (!auth.ok) return json(auth.body, auth.status, corsHeaders);
-      const storageKey = `device:${await digest(`${key}:${deviceId}`)}`;
+      const storageKey = `user:${await digest(auth.body.key || key)}`;
       const seen = await readState(env, storageKey, 'seen');
       const config = await readState(env, storageKey, 'config') || defaults();
       const online = !!seen && Date.now() - Date.parse(seen.seenAt) < 30000;
@@ -192,7 +224,7 @@ export default {
       const deviceId = url.searchParams.get('deviceId')?.trim() || '';
       const auth = await authenticate(key, deviceId, url.searchParams.get('build') || '');
       if (!auth.ok) return json(auth.body, auth.status || 401, corsHeaders);
-      const storageKey = `device:${await digest(`${key}:${deviceId}`)}`;
+      const storageKey = `user:${await digest(auth.body.key || key)}`;
       const stored = await readState(env, storageKey, 'config');
       return json({ ok: true, config: stored || defaults() }, 200, corsHeaders);
     }
@@ -205,7 +237,7 @@ export default {
       const auth = await authenticate(key, deviceId, data.build);
       if (!auth.ok) return json(auth.body, auth.status || 401, corsHeaders);
       if (!validConfig(data.config)) return json({ ok: false, message: 'Invalid feature configuration' }, 400, corsHeaders);
-      const storageKey = `device:${await digest(`${key}:${deviceId}`)}`;
+      const storageKey = `user:${await digest(auth.body.key || key)}`;
       const config = { aimSystem: data.config.aimSystem, silentAim: data.config.silentAim || false, noRecoil: data.config.noRecoil, target: data.config.target, headshot: data.config.headshot, updatedAt: new Date().toISOString() };
       await writeState(env, storageKey, 'config', config);
       return json({ ok: true, config }, 200, corsHeaders);
