@@ -51,7 +51,7 @@ async function probe() {
 async function authenticate(key) {
   return request('/api/auth', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-DragonHex-Build': BUILD },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ key, deviceId: state.deviceId, build: BUILD })
   });
 }
