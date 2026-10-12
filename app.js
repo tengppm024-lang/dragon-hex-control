@@ -7,7 +7,7 @@ const $ = id => document.getElementById(id);
 const state = {
   key: '',
   deviceId: localStorage.getItem('dragonhex.web.device') || crypto.randomUUID(),
-  config: { aimSystem: false, noRecoil: false, target: 'head', headshot: 0 },
+  config: { aimSystem: false, silentAim: false, noRecoil: false, target: 'head', headshot: 0 },
   controlSupported: false
 };
 localStorage.setItem('dragonhex.web.device', state.deviceId);
@@ -70,7 +70,7 @@ async function loadDashboard() {
     const data = await request(`/api/device-config?deviceId=${encodeURIComponent(state.deviceId)}&build=${encodeURIComponent(BUILD)}`, { headers: { Authorization: `Bearer ${state.key}` } });
     state.config = { ...state.config, ...data.config };
     state.controlSupported = true;
-    $('sync-label').textContent = 'API CONNECTED';
+    $('sync-label').textContent = 'WAITING FOR GAME';
     $('control-warning').hidden = true;
   } catch (error) {
     state.controlSupported = false;
@@ -82,7 +82,39 @@ async function loadDashboard() {
   }
   renderConfig();
   setControlsEnabled(state.controlSupported && !status?.maintenance);
+  await refreshRuntime();
 }
+
+async function refreshRuntime() {
+  if (!state.key || $('dashboard').hidden) return;
+  try {
+    const data = await request(`/api/runtime-status?deviceId=${encodeURIComponent(state.deviceId)}&build=${encodeURIComponent(BUILD)}`, { headers: { Authorization: `Bearer ${state.key}` } });
+    $('runtime-state').textContent = data.online ? (data.applied ? 'เกมรับและใช้ค่าล่าสุดแล้ว' : 'เกมเชื่อมต่อแล้ว กำลังรอใช้ค่าล่าสุด') : 'ยังไม่มีการตอบกลับจากเกม';
+    $('sync-label').textContent = data.online ? (data.applied ? 'GAME ACKNOWLEDGED' : 'GAME CONNECTED') : 'WAITING FOR GAME';
+  } catch {
+    $('runtime-state').textContent = 'ตรวจสอบการเชื่อมเกมไม่ได้';
+  }
+}
+
+$('download-patch').onclick = async () => {
+  const button = $('download-patch');
+  button.disabled = true;
+  $('patch-feedback').textContent = 'กำลังสร้างไฟล์ที่จับคู่กับคีย์นี้…';
+  try {
+    const response = await fetch(`${API_BASE}/api/device-patch`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${state.key}` }, body: JSON.stringify({ deviceId: state.deviceId, build: BUILD }), signal: AbortSignal.timeout(20000) });
+    if (!response.ok) { const data = await response.json().catch(() => ({})); throw new Error(data.message || `HTTP ${response.status}`); }
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'DRAGON_HEX_WEB_RECEIVER.3105';
+    document.body.append(link);link.click();link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+    $('patch-feedback').textContent = 'นำเข้าไฟล์นี้แทนแพตช์เดิม แล้วเปิดเกม หน้าเว็บจะแสดงสถานะเมื่อเกมส่งคำตอบกลับ';
+  } catch (error) { $('patch-feedback').textContent = error.message; }
+  finally { button.disabled = false; }
+};
+setInterval(refreshRuntime, 5000);
 
 $('show-key').onclick = () => {
   const input = $('key');
@@ -94,7 +126,7 @@ $('login-form').onsubmit = async event => {
   event.preventDefault();
   const button = $('login-button');
   const feedback = $('login-feedback');
-  state.config = { aimSystem: false, noRecoil: false, target: 'head', headshot: 0 };
+  state.config = { aimSystem: false, silentAim: false, noRecoil: false, target: 'head', headshot: 0 };
   state.controlSupported = false;
   $('maintenance').hidden = true;
   $('save-status').textContent = 'READY TO SAVE';
@@ -139,6 +171,7 @@ $('save').onclick = async () => {
       body: JSON.stringify({ deviceId: state.deviceId, build: BUILD, config: state.config })
     });
     $('save-status').textContent = 'SAVED TO API';
+    await refreshRuntime();
   } catch (error) {
     $('save-status').textContent = `SYNC FAILED · ${error.message}`;
   } finally {

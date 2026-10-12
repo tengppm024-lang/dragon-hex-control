@@ -4,6 +4,8 @@
   "main": "src/index.js",
   "compatibility_date": "2026-10-12",
   "compatibility_flags": ["global_fetch_strictly_public"],
+  "durable_objects": { "bindings": [{ "name": "DEVICE_STATE", "class_name": "DeviceState" }] },
+  "migrations": [{ "tag": "device-state-v1", "new_sqlite_classes": ["DeviceState"] }],
   "kv_namespaces": [
     {
       "binding": "DEVICE_CONFIG",
