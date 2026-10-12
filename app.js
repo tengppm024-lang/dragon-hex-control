@@ -64,8 +64,7 @@ async function loadDashboard() {
     $('maintenance').textContent = `MAINTENANCE — ${status.message || 'ระบบกำลังปิดปรับปรุง'}`;
   }
 
-  // This is the feature-control contract required by the web panel and the device patch.
-  // The current Worker returns 404 until that backend/device integration is deployed.
+  // Load configuration for the same device identity embedded in its downloaded patch.
   try {
     const data = await request(`/api/device-config?deviceId=${encodeURIComponent(state.deviceId)}&build=${encodeURIComponent(BUILD)}`, { headers: { Authorization: `Bearer ${state.key}` } });
     state.config = { ...state.config, ...data.config };

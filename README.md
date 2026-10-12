@@ -1,46 +1,17 @@
 # DRAGON HEX Control
 
-หน้าเว็บ GitHub Pages โทนสีเขียวสำหรับตรวจคีย์กับ `https://dhx.dragonhex.workers.dev` และเตรียมหน้าควบคุมฟังก์ชันจากระยะไกล
+เว็บ: https://tengppm024-lang.github.io/dragon-hex-control/
+API: https://dragon-hex-control-api.dragonhex.workers.dev
 
-## สถานะการเชื่อมต่อ
+ตรวจคีย์จาก API เดิมของ dhx แล้วให้ดาวน์โหลดไฟล์ 3105 ที่เพิ่มตัวรับคำสั่งเว็บและจับคู่กับเบราว์เซอร์นี้ ดู RECEIVER_NOTES.md สำหรับวิธีนำเข้าและข้อจำกัดการทดสอบบนเครื่องจริง
 
-ส่วนตรวจคีย์เชื่อมกับ API จริงผ่าน `POST /api/auth` โดยส่ง `key`, `deviceId` และ `build` ตามรูปแบบที่แอป DRAGON HEX ใช้
+หน้าเว็บมี AIM SYSTEM, SILENT AIM, NO RECOIL, TARGET และ HEADSHOT บันทึก config ลง Durable Object ต่ออุปกรณ์ ตัวรับในแพตช์อ่านคำสั่งและส่ง applied mask กลับมา เว็บจะแสดง GAME ACKNOWLEDGED เฉพาะเมื่อมี heartbeat และค่าตรงกับ config ล่าสุด
 
-API ปัจจุบันยังไม่มี endpoint สำหรับอ่าน/บันทึกสถานะฟังก์ชัน (`GET/PUT /api/device-config` ตอบ 404) และไฟล์แพตช์ปัจจุบันยังไม่ได้อ่าน remote configuration ดังนั้นหน้าเว็บจะปิดสวิตช์ไว้และแจ้ง `API UPDATE NEEDED` เพื่อไม่แสดงผลสำเร็จปลอม
+GET/PUT /api/device-config ใช้ Authorization: Bearer access-key
+POST /api/device-patch ใช้ access-key สร้างไฟล์จับคู่
+GET /api/runtime-config ใช้ receiver token ในแพตช์และตอบ packed mask แบบ text/plain
+GET /api/runtime-status ใช้ access-key ตรวจ heartbeat ของอุปกรณ์นี้
 
-## API contract ที่ต้องเพิ่ม
+แพตช์ต้นฉบับและแม่แบบไม่ได้เผยแพร่ใน public GitHub repository แม่แบบอยู่ใน Cloudflare KV receiver:template:v1 ภายในบัญชีผู้ใช้ GitHub Pages workflow เผยแพร่เฉพาะไฟล์หน้าเว็บ
 
-```http
-GET /api/device-config?deviceId=...
-Authorization: Bearer YOUR_KEY
-```
-
-```json
-{
-  "ok": true,
-  "config": {
-    "aimSystem": true,
-    "noRecoil": false,
-    "target": "head",
-    "headshot": 75,
-    "updatedAt": "2026-10-12T00:00:00.000Z"
-  }
-}
-```
-
-```http
-PUT /api/device-config
-Content-Type: application/json
-Authorization: Bearer YOUR_KEY
-
-{"deviceId":"...","config":{"aimSystem":true,"noRecoil":false,"target":"head","headshot":75}}
-```
-
-ฝั่งแพตช์ต้อง poll endpoint นี้และนำค่าไปใช้กับตัวแปรจริงของฟังก์ชัน หากยังไม่มีส่วนนี้ GitHub Pages เพียงอย่างเดียวจะไม่สามารถเปลี่ยนสถานะในเกมบน iPhone ได้
-
-## Publish
-
-ใช้ workflow ใน `.github/workflows/pages.yml` ซึ่งเผยแพร่เฉพาะไฟล์หน้าเว็บ ห้ามเผยแพร่ root ทั้งโฟลเดอร์ เพราะมีไฟล์แพตช์ต้นฉบับอยู่ด้วย
-
-หลัง Deploy Worker ให้ใส่ URL จริงใน `config.js` ก่อนเผยแพร่หน้าเว็บ ดู `DEVICE_API.md` สำหรับการเชื่อมอุปกรณ์
-
+รัน tests ด้วย node tests/worker.mjs จากโฟลเดอร์นี้ การทดสอบ package และ receiver assembly อยู่ใน workspace work/ และได้ผ่านแล้ว ยังไม่ได้ทดสอบ interpreter จริงในเกมบน iPhone
