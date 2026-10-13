@@ -33,6 +33,7 @@ function setApiStatus(mode, text) {
 function setControlsEnabled(enabled) {
   document.querySelectorAll('.feature-toggle, .segmented button, #fov-radius').forEach(control => { control.disabled = !enabled; });
   $('save').disabled = !enabled;
+  $('reset-all').disabled = !enabled;
 }
 
 function renderConfig() {
@@ -185,11 +186,14 @@ document.querySelectorAll('[data-headshot]').forEach(button => {
   button.onclick = () => { state.config.headshot = Number(button.dataset.headshot); renderConfig(); $('save-status').textContent = 'UNSAVED CHANGES'; };
 });
 
-$('save').onclick = async () => {
+async function persistConfig(reset = false) {
+  if (!state.key || !state.controlSupported || $('save').disabled || !$('maintenance').hidden) return;
+  if (reset) { state.config = defaultConfig(); renderConfig(); }
   const sessionKey=state.key;
   const button = $('save');
   button.disabled = true;
-  $('save-status').textContent = 'SYNCING…';
+  $('reset-all').disabled = true;
+  $('save-status').textContent = reset ? 'กำลังรีเซ็ตทุกฟังก์ชั่น…' : 'SYNCING…';
   try {
     await request('/api/device-config', {
       method: 'PUT',
@@ -197,16 +201,19 @@ $('save').onclick = async () => {
       body: JSON.stringify({ deviceId: state.deviceId, build: BUILD, config: state.config })
     });
     if(state.key!==sessionKey)return;
-    $('save-status').textContent = 'SAVED TO API';
+    $('save-status').textContent = reset ? 'รีเซ็ตและบันทึกแล้ว' : 'SAVED TO API';
     await refreshRuntime();
   } catch (error) {
     if(state.key!==sessionKey)return;
     if([401,403].includes(error.status)){endSession(error.message);return;}
     $('save-status').textContent = `SYNC FAILED · ${error.message}`;
   } finally {
-    button.disabled = !state.controlSupported || !$('maintenance').hidden;
+    button.disabled = !state.key || !state.controlSupported || !$('maintenance').hidden;
+    $('reset-all').disabled = button.disabled;
   }
-};
+}
+$('save').onclick = () => persistConfig();
+$('reset-all').onclick = () => persistConfig(true);
 
 $('logout').onclick = () => {
   endSession();

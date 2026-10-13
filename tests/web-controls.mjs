@@ -25,6 +25,9 @@ groups['[data-target]'].find(b=>b.dataset.target==='body').onclick();groups['[da
 groups['[data-headshot]'].find(b=>b.dataset.headshot==='75').onclick();element('fov-radius').value='31';element('fov-radius').oninput();
 await element('save').onclick();assert.equal(sent.target,'body');assert.equal(sent.aimSystemTarget,'neck');assert.equal(sent.headshot,75);assert.equal(sent.fovRadius,400);
 for(const control of groups['.feature-toggle'])assert.equal(sent[control.dataset.feature],true);
-element('logout').onclick();assert.equal(element('dashboard').hidden,true);assert.equal(context.window.location.hash,'login');assert.equal(element('key').value,'');
+await element('reset-all').onclick();
+for(const control of groups['.feature-toggle']){assert.equal(sent[control.dataset.feature],false);assert.equal(control.checked,false);}
+assert.equal(sent.target,'head');assert.equal(sent.aimSystemTarget,'head');assert.equal(sent.headshot,0);assert.equal(sent.fovRadius,197);assert.equal(element('reset-all').disabled,false);
+element('logout').onclick();assert.equal(element('reset-all').disabled,true);assert.equal(element('dashboard').hidden,true);assert.equal(context.window.location.hash,'login');assert.equal(element('key').value,'');
 expired=true;element('key').value='EXPIRED';await element('login-form').onsubmit({preventDefault(){}});assert.equal(element('dashboard').hidden,true);assert.match(element('login-feedback').textContent,/หมดอายุ/);
 console.log('PASS: 11 controls, independent targets, FOV slider and rates reach PUT payload; separated views; countdown; expired login rejected; no key-admin navigation');
