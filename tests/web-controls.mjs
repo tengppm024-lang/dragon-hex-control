@@ -11,7 +11,7 @@ for(const [name,selector] of [['feature','.feature-toggle'],['target','[data-tar
 assert.equal(groups['.feature-toggle'].length,11);assert.equal(groups['[data-target]'].length,3);assert.equal(groups['[data-aim-target]'].length,2);
 let sent,expired=false,imported=false;
 for(const input of groups['.feature-toggle']) input.closest=()=>element('card:'+input.dataset.feature);
-const timers=[];const context={Date,URL,AbortSignal,crypto,localStorage:{getItem:()=>null,setItem(){}},window:{location:{hash:''},DRAGON_HEX_CONFIG:{apiBase:'https://test.local',buildNumber:'22'}},document:{getElementById:element,querySelectorAll:selector=>groups[selector] || (selector.includes('.feature-toggle,')?[...groups['.feature-toggle'],...groups['[data-target]'],...groups['[data-headshot]'],...groups['[data-aim-target]'],element('fov-radius')]:[]),createElement:()=>({}),createTextNode:v=>v},setInterval:(fn,ms)=>timers.push({fn,ms}),setTimeout(){},fetch:async(url,opt={})=>{
+const timers=[];const context={TextEncoder,Date,URL,AbortSignal,crypto,localStorage:{getItem:()=>null,setItem(){}},window:{location:{hash:''},DRAGON_HEX_CONFIG:{apiBase:'https://test.local',buildNumber:'22'}},document:{getElementById:element,querySelectorAll:selector=>groups[selector] || (selector.includes('.feature-toggle,')?[...groups['.feature-toggle'],...groups['[data-target]'],...groups['[data-headshot]'],...groups['[data-aim-target]'],element('fov-radius')]:[]),createElement:()=>({}),createTextNode:v=>v},setInterval:(fn,ms)=>timers.push({fn,ms}),setTimeout(){},fetch:async(url,opt={})=>{
  const path=new URL(url).pathname;
  if(path==='/api/feature-catalog')return new Response(JSON.stringify({ok:true,features:imported?[{id:'espMaster',label:'ESP Master'},{id:'fovCircle',label:'FOV Circle'}]:[]}));
  if(path==='/api/auth')return new Response(JSON.stringify({valid:true,expiresAt:new Date(Date.now()+(expired?-1000:90000000)).toISOString()}));
@@ -19,6 +19,11 @@ const timers=[];const context={Date,URL,AbortSignal,crypto,localStorage:{getItem
  return new Response(JSON.stringify({ok:true,version:'2.0',config:{},online:false}));
 }};
 vm.createContext(context);vm.runInContext(fs.readFileSync(new URL('../app.js',import.meta.url),'utf8'),context);
+for(const invalid of ['ก'.repeat(220),'ก'.repeat(170),'A'.repeat(509)]){
+ element('key').value=invalid;await element('login-form').onsubmit({preventDefault(){}});
+ assert.match(element('login-feedback').textContent,/คีย์ยาวเกิน/);
+ assert.equal(element('dashboard').hidden,true);
+}
 element('key').value='TEST_KEY';await element('login-form').onsubmit({preventDefault(){}});
 assert.equal(element('dashboard').hidden,false);assert.equal(element('login-view').hidden,true);assert.equal(context.window.location.hash,'control');
 assert.match(element('key-countdown').textContent,/วัน/);assert.match(element('key-expiry').textContent,/หมดอายุ/);

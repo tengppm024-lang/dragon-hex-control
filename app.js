@@ -185,6 +185,7 @@ $('login-form').onsubmit = async event => {
   button.disabled = true;
   feedback.textContent = 'กำลังตรวจสอบคีย์…';
   try {
+    if(new TextEncoder().encode('key:'+state.key).length>512)throw new Error('คีย์ยาวเกินรูปแบบที่ระบบรองรับ กรุณาวางเฉพาะ Access Key เดียวกับที่ใช้ล็อกอิน IPA');
     const auth = await authenticate(state.key);
     if(auth.expiresAt && (!Number.isFinite(Date.parse(auth.expiresAt)) || Date.now()>=Date.parse(auth.expiresAt)))throw new Error('คีย์หมดอายุ');
     if (!auth.valid) throw new Error(auth.message || 'คีย์ไม่ถูกต้อง');

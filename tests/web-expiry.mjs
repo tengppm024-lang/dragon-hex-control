@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 const elements=new Map();
 const element=id=>{if(!elements.has(id))elements.set(id,{hidden:id==='dashboard',value:'',textContent:'',disabled:false,classList:{toggle(){}},replaceChildren(){}});return elements.get(id);};
 const timers=[];let expiry=new Date(Date.now()+60000).toISOString(),unauthorized=false;
-const context={URL,Date,AbortSignal,crypto,localStorage:{getItem:()=>null,setItem(){}},window:{location:{hash:''},DRAGON_HEX_CONFIG:{apiBase:'https://control.test',buildNumber:'22'}},document:{getElementById:element,querySelectorAll:()=>[],createElement:()=>({}),createTextNode:x=>x},setInterval:(fn,ms)=>timers.push({fn,ms}),setTimeout(){},fetch:async url=>{
+const context={TextEncoder,URL,Date,AbortSignal,crypto,localStorage:{getItem:()=>null,setItem(){}},window:{location:{hash:''},DRAGON_HEX_CONFIG:{apiBase:'https://control.test',buildNumber:'22'}},document:{getElementById:element,querySelectorAll:()=>[],createElement:()=>({}),createTextNode:x=>x},setInterval:(fn,ms)=>timers.push({fn,ms}),setTimeout(){},fetch:async url=>{
  const path=new URL(url).pathname;
  if(path==='/api/auth')return new Response(JSON.stringify({ok:true,valid:true,expiresAt:expiry}));
  if(path==='/api/runtime-status' && unauthorized)return new Response(JSON.stringify({ok:false,message:'Key expired'}),{status:403});

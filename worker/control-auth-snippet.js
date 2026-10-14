@@ -3,7 +3,7 @@
 async function authenticateControl(env, request, url) {
   const body = await readBody(request);
   const key = String(body.key || '').trim();
-  if (!key || key.length > 512) return json({ok:false,valid:false,message:'Invalid key'},401);
+  if (!key || new TextEncoder().encode('key:'+key).length > 512) return json({ok:false,valid:false,message:'กรุณาวางเฉพาะ Access Key เดียวกับที่ใช้ล็อกอิน IPA'},400);
   const maintenance = await getMaintenance(env);
   if (maintenanceApplies(maintenance,buildFromRequest(url,request,body))) return json({ok:false,valid:false,maintenance:true,message:maintenance.message},503);
   const record = await getKey(env,key);

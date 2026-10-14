@@ -85,7 +85,8 @@ async function digest(value) {
 
 async function authenticate(key, deviceId, build = '') {
   if (typeof build !== 'string' || !/^\d{1,12}$/.test(build)) return { ok: false, status: 400, body: { ok: false, message: 'App build number is required' } };
-  if (typeof key !== 'string' || !key || key.length > 512) return { ok: false, status: 400, body: { ok: false, message: 'Valid key is required' } };
+  if (typeof key !== 'string' || !key) return { ok: false, status: 400, body: { ok: false, message: 'กรุณากรอก Access Key ที่ใช้ล็อกอิน IPA' } };
+  if (new TextEncoder().encode('key:'+key).length > 512) return { ok: false, status: 400, body: { ok: false, message: 'คีย์ยาวเกินรูปแบบที่ระบบรองรับ กรุณาวางเฉพาะ Access Key เดียวกับที่ใช้ล็อกอิน IPA' } };
   const response = await fetch(`${UPSTREAM}/api/control-auth`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', accept: 'application/json' },
