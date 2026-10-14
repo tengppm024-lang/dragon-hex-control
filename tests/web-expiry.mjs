@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import assert from 'node:assert/strict';
 const elements=new Map();
-const element=id=>{if(!elements.has(id))elements.set(id,{hidden:id==='dashboard',value:'',textContent:'',disabled:false,classList:{toggle(){}},replaceChildren(){}});return elements.get(id);};
+const element=id=>{if(!elements.has(id))elements.set(id,{hidden:id==='dashboard',value:'',textContent:'',disabled:false,classList:{toggle(){}},replaceChildren(){},append(){}});return elements.get(id);};
 const timers=[];let expiry=new Date(Date.now()+60000).toISOString(),unauthorized=false;
 const context={TextEncoder,URL,Date,AbortSignal,crypto,localStorage:{getItem:()=>null,setItem(){}},window:{location:{hash:''},DRAGON_HEX_CONFIG:{apiBase:'https://control.test',buildNumber:'22'}},document:{getElementById:element,querySelectorAll:()=>[],createElement:()=>({}),createTextNode:x=>x},setInterval:(fn,ms)=>timers.push({fn,ms}),setTimeout(){},fetch:async url=>{
  const path=new URL(url).pathname;

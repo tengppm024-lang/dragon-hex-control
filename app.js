@@ -13,6 +13,8 @@ const state = {
   catalogIds: null,
   nativeCatalog: null,
   nativeReady: false,
+  presetScope: '',
+  refreshing: false,
   nativeElements: new Map(),
   controlSupported: false
 };
@@ -42,7 +44,7 @@ function setControlsEnabled(enabled) {
 }
 
 function renderConfig() {
-  state.nativeElements.forEach(({input,field})=>{if(field.kind==='boolean')input.checked=Boolean(state.config[field.id]);else input.value=String(state.config[field.id]);});
+  state.nativeElements.forEach(({input,field})=>{if(field.kind==='boolean')input.checked=Boolean(state.config[field.id]);else input.value=String(state.config[field.id]);if(field.id==='fovRadius' && $('native-fov-value'))$('native-fov-value').textContent=input.value+' px';});
   document.querySelectorAll('[data-aim-target]').forEach(button=>button.classList.toggle('active',button.dataset.aimTarget===state.config.aimSystemTarget));
   const radius=Math.max(0,Math.min(31,Math.round((state.config.fovRadius-50)/11.29)));
   $('fov-radius').value=String(radius);$('fov-value').textContent=`${Math.round(50+radius*11.29)} px`;
@@ -71,11 +73,11 @@ function renderNativeCatalog(catalog) {
       let input;
       if(field.kind==='select'){
         input=document.createElement('select');for(const option of field.options){const o=document.createElement('option');o.value=String(option.value);o.textContent=option.label;input.append(o);}
-      }else{input=document.createElement('input');input.type=field.kind==='boolean'?'checkbox':'number';if(field.kind==='integer'){input.min=String(field.min);input.max=String(field.max);input.step='1';input.required=true;}}
+      }else{input=document.createElement('input');input.type=field.kind==='boolean'?'checkbox':field.id==='fovRadius'?'range':'number';if(field.kind==='integer'){input.min=String(field.min);input.max=String(field.max);input.step='1';input.required=true;}}
       input.setAttribute('aria-label',field.label);input.dataset.nativeSetting=field.id;
       const existing=state.config[field.id];state.config[field.id]=field.kind==='boolean'?(typeof existing==='boolean'?existing:field.default):Number.isInteger(existing)?Math.max(field.min,Math.min(field.max,existing)):field.default;
       input.onchange=()=>{if(field.kind==='boolean')state.config[field.id]=input.checked;else if(input.validity.valid)state.config[field.id]=Number(input.value);$('save-status').textContent='UNSAVED CHANGES';};
-      card.append(input);if(field.kind==='integer'){const bounds=document.createElement('small');bounds.textContent=field.min+' – '+field.max;card.append(bounds);}cards.append(card);state.nativeElements.set(field.id,{input,field});
+      card.append(input);if(field.id==='fovRadius'){card.classList.add('native-fov-card');const value=document.createElement('output');value.id='native-fov-value';value.textContent=state.config[field.id]+' px';card.append(value);input.oninput=()=>{state.config[field.id]=Number(input.value);value.textContent=input.value+' px';$('save-status').textContent='ยังไม่ได้บันทึก';};}if(field.kind==='integer'){const bounds=document.createElement('small');bounds.textContent=field.min+' – '+field.max;card.append(bounds);}cards.append(card);state.nativeElements.set(field.id,{input,field});
     }
     section.append(cards);root.append(section);
   }
@@ -200,6 +202,7 @@ setInterval(updateExpiry,1000);
 
 function endSession(message='') {
   state.key='';state.expiresAt=null;state.controlSupported=false;state.catalogIds=null;
+  state.presetScope='';$('preset-name').value='';$('preset-feedback').textContent='';renderPresetList();
   state.nativeCatalog=null;state.nativeReady=false;state.nativeElements.clear();$('native-controls').replaceChildren();$('native-controls').hidden=true;
   document.querySelectorAll('.side-nav').forEach(nav=>{nav.hidden=false;});
   document.querySelectorAll('a[data-original-href]').forEach(link=>{link.href=link.dataset.originalHref;});
@@ -236,6 +239,8 @@ $('login-form').onsubmit = async event => {
     const auth = await authenticate(state.key);
     if(auth.expiresAt && (!Number.isFinite(Date.parse(auth.expiresAt)) || Date.now()>=Date.parse(auth.expiresAt)))throw new Error('คีย์หมดอายุ');
     if (!auth.valid) throw new Error(auth.message || 'คีย์ไม่ถูกต้อง');
+    state.presetScope=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(state.key)))).map(b=>b.toString(16).padStart(2,'0')).join('');
+    renderPresetList();
     state.expiresAt=auth.expiresAt || null;
     $('key-status').textContent = auth.expiresAt ? `ACTIVE · ${new Date(auth.expiresAt).toLocaleDateString('th-TH')}` : 'ACTIVE';
     $('device-label').textContent = '1 KEY · 1 USER';
@@ -282,7 +287,8 @@ async function persistConfig(reset = false) {
       body: JSON.stringify({ deviceId: state.deviceId, build: BUILD, config: state.config })
     });
     if(state.key!==sessionKey)return;
-    $('save-status').textContent = reset ? 'รีเซ็ตและบันทึกแล้ว' : 'SAVED TO API';
+    $('save-status').textContent = reset ? 'รีเซ็ตและบันทึกแล้ว' : 'บันทึกและส่งแล้ว';
+    if(!reset)storePreset('บันทึก '+new Date().toLocaleString('th-TH')); 
     await refreshRuntime();
   } catch (error) {
     if(state.key!==sessionKey)return;
@@ -295,6 +301,37 @@ async function persistConfig(reset = false) {
 }
 $('save').onclick = () => persistConfig();
 $('reset-all').onclick = () => persistConfig(true);
+
+
+function collectCurrentConfig(){
+  if([...state.nativeElements.values()].some(({input})=>input.validity&&!input.validity.valid))throw new Error('กรุณาตรวจค่าที่อยู่นอกช่วง');
+  state.nativeElements.forEach(({input,field})=>{state.config[field.id]=field.kind==='boolean'?input.checked:Number(input.value);});
+  return JSON.parse(JSON.stringify(state.config));
+}
+function readPresets(){try{const value=JSON.parse(localStorage.getItem('dragonhex.presets.'+state.presetScope)||'[]');return Array.isArray(value)?value.filter(x=>x&&typeof x.id==='string'&&typeof x.name==='string'&&x.config&&typeof x.config==='object').slice(0,10):[];}catch{return [];}}
+function renderPresetList(){
+  const select=$('preset-list');if(!select)return;select.replaceChildren();
+  const empty=document.createElement('option');empty.value='';empty.textContent='เลือกชุดการตั้งค่า';select.append(empty);
+  if(state.presetScope)for(const item of readPresets()){const option=document.createElement('option');option.value=item.id;option.textContent=item.name;select.append(option);}
+  $('restore-preset').disabled=!state.key||!state.presetScope;
+  $('save-preset').disabled=!state.key||!state.presetScope;
+}
+function storePreset(name){
+  if(!state.presetScope)return;
+  try{const item={id:crypto.randomUUID(),name:name.slice(0,60),savedAt:Date.now(),config:collectCurrentConfig(),native:Boolean(state.nativeCatalog)};const list=[item,...readPresets()].slice(0,10);localStorage.setItem('dragonhex.presets.'+state.presetScope,JSON.stringify(list));renderPresetList();$('preset-list').value=item.id;$('preset-feedback').textContent='เก็บชุดการตั้งค่าแล้ว';}
+  catch{$('preset-feedback').textContent='เก็บชุดการตั้งค่าไม่ได้ กรุณาตรวจค่าหรือพื้นที่เบราว์เซอร์';}
+}
+$('save-preset').onclick=()=>{if(!state.key)return;const name=$('preset-name').value.trim()||'ชุดการตั้งค่า '+new Date().toLocaleString('th-TH');storePreset(name);};
+$('restore-preset').onclick=()=>{
+  if(!state.key)return;const item=readPresets().find(x=>x.id===$('preset-list').value);if(!item){$('preset-feedback').textContent='กรุณาเลือกชุดการตั้งค่า';return;}
+  if(item.native!==Boolean(state.nativeCatalog)){$('preset-feedback').textContent='ชุดนี้ไม่ตรงกับเมนูปัจจุบัน';return;}
+  const next=state.nativeCatalog?Object.fromEntries(state.nativeCatalog.map(f=>[f.id,f.kind==='boolean'?(typeof item.config[f.id]==='boolean'?item.config[f.id]:f.default):(Number.isInteger(item.config[f.id])?Math.max(f.min,Math.min(f.max,item.config[f.id])):f.default)])):{...defaultConfig(),...item.config};
+  state.config=next;renderConfig();$('save-status').textContent='เรียกคืนแล้ว · ยังไม่ได้ส่ง';$('preset-feedback').textContent='เรียกคืนแล้ว กดบันทึกและส่งเพื่อใช้งาน';
+};
+$('refresh-status').onclick=async()=>{
+  if(!state.key||state.refreshing)return;state.refreshing=true;const button=$('refresh-status');button.disabled=true;button.classList.add('refreshing');$('status-updated').textContent='กำลังตรวจสถานะ…';
+  try{await probe();await refreshRuntime();if(state.key)$('status-updated').textContent='ตรวจล่าสุด '+new Date().toLocaleTimeString('th-TH');}finally{state.refreshing=false;button.disabled=!state.key;button.classList.remove('refreshing');}
+};
 
 $('logout').onclick = () => {
   endSession();

@@ -2,7 +2,7 @@ import fs from 'node:fs';import vm from 'node:vm';import assert from 'node:asser
 const html=fs.readFileSync(new URL('../index.html',import.meta.url),'utf8');
 assert.ok(!html.includes('/keys'));assert.ok(!html.includes('สร้างคีย์'));
 const elems=new Map();
-const element=id=>{if(!elems.has(id))elems.set(id,{hidden:id==='dashboard',value:'',textContent:'',disabled:false,dataset:{},classList:{toggle(){}},replaceChildren(){}});return elems.get(id);};
+const element=id=>{if(!elems.has(id))elems.set(id,{hidden:id==='dashboard',value:'',textContent:'',disabled:false,dataset:{},classList:{toggle(){}},replaceChildren(){},append(){}});return elems.get(id);};
 const groups={'.feature-toggle':[], '[data-target]':[], '[data-headshot]':[], '[data-aim-target]':[]};
 for(const [name,selector] of [['feature','.feature-toggle'],['target','[data-target]'],['headshot','[data-headshot]'],['aim-target','[data-aim-target]']]){
  const pattern=new RegExp(`data-${name}="([^"]+)"`,'g');
