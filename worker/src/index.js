@@ -1,3 +1,4 @@
+import {DRAGONX_CONTROLS,DRAGONX_IDS,normalizeDragonx,validDragonx,dragonxPacket,parseDragonxReadback} from './dragonx.js';
 const UPSTREAM = 'https://dhx.dragonhex.workers.dev';
 const WEB_ORIGIN = 'https://tengppm024-lang.github.io';
 
@@ -8,10 +9,10 @@ export class DeviceState {
   async fetch(request) {
     const field = new URL(request.url).pathname.slice(1);
     if (field === 'activate' && request.method === 'POST') {
-      const {tokenHash,receiverVariant='legacy'} = await request.json();
+      const {tokenHash,receiverVariant='legacy',protocolVersion=2} = await request.json();
       await this.storage.transaction(async tx => {
         await tx.put('receiver', {tokenHash, deviceHash:null});
-        await tx.put('profile', {receiverVariant});
+        await tx.put('profile', {receiverVariant,protocolVersion});
         await tx.delete('seen');
       });
       return new Response(null, {status:204});
@@ -23,8 +24,8 @@ export class DeviceState {
         if (!owner || owner.tokenHash !== data.tokenHash) return new Response('Receiver replaced', {status:409});
         if (owner.deviceHash && owner.deviceHash !== data.deviceHash) return new Response('Key already connected to another game device', {status:409});
         if (!owner.deviceHash) await tx.put('receiver', {...owner,deviceHash:data.deviceHash});
-        if (data.appliedMask !== null) await tx.put('seen', {seenAt:new Date().toISOString(),appliedMask:data.appliedMask,protocolVersion:data.protocolVersion || 1,receiverVariant:data.receiverVariant || 'legacy',readback:data.readback===true,hookFlags:data.hookFlags ?? null});
-        return new Response(JSON.stringify(await tx.get('config') || defaults()), {headers:{'content-type':'application/json'}});
+        if (data.appliedMask !== null || data.appliedValues) await tx.put('seen', {seenAt:new Date().toISOString(),appliedMask:data.appliedMask,appliedValues:data.appliedValues || null,protocolVersion:data.protocolVersion || 1,receiverVariant:data.receiverVariant || 'legacy',readback:data.readback===true,hookFlags:data.hookFlags ?? null});
+        return new Response(JSON.stringify(await tx.get('config') || (data.protocolVersion===3?normalizeDragonx():defaults())), {headers:{'content-type':'application/json'}});
       });
     }
     if (!['config', 'seen', 'profile'].includes(field)) return new Response('Not found', {status:404});
@@ -163,7 +164,7 @@ export default {
     if (request.method === 'OPTIONS') return new Response(null, { status: allowed ? 204 : 403, headers: corsHeaders });
     if (!allowed) return json({ ok: false, message: 'Origin not allowed' }, 403, corsHeaders);
 
-    if (url.pathname === '/') return json({ ok: true, name: 'DRAGON HEX Control API', version: '2.1' }, 200, corsHeaders);
+    if (url.pathname === '/') return json({ ok: true, name: 'DRAGON HEX Control API', version: '3.0' }, 200, corsHeaders);
     if (url.pathname === '/keys') return Response.redirect(`${UPSTREAM}/keys`, 302);
     if (url.pathname === '/api/auth' && request.method === 'POST') {
       const data=await request.json().catch(()=>null);
@@ -175,11 +176,10 @@ export default {
       const auth = await authenticate(bearer(request), null, url.searchParams.get('build'));
       if (!auth.ok) return json(auth.body, auth.status, corsHeaders);
       const profile=await readState(env,`user:${await digest(auth.body.key || bearer(request))}`,'profile');
-      if(profile?.receiverVariant==='dragonx')return json({ok:true,receiverVariant:'dragonx',settings:['fovRadius'],features:[['espMaster','ESP'],['skeleton','Bone'],['distance','Distance'],['playerName','Name'],['healthBar','HP'],['topTracer','Line'],['playerBox','Box'],['aimSystem','Aimbot'],['silentAim','Aim Vector'],['noRecoil','Silent Aim / Scatter'],['fovCircle','FOV']].map(([id,label])=>({id,label,group:['aimSystem','silentAim','noRecoil','fovCircle'].includes(id)?'AIM':'ESP'}))},200,corsHeaders);
-      return proxy('/api/studio/catalog', request, corsHeaders);
+      return json({ok:true,receiverVariant:'dragonx',protocolVersion:3,ready:profile?.receiverVariant==='dragonx'&&profile?.protocolVersion===3,features:DRAGONX_CONTROLS.map(({slot,...f})=>f)},200,corsHeaders);
     }
 
-    if (['/api/device-patch', '/api/runtime-config', '/api/runtime-config-v2', '/api/runtime-status'].includes(url.pathname) && !env.DEVICE_CONFIG) return json({ ok: false, message: 'DEVICE_CONFIG KV binding is not configured' }, 503, corsHeaders);
+    if (['/api/device-patch', '/api/runtime-config', '/api/runtime-config-v2','/api/runtime-config-v3', '/api/runtime-status'].includes(url.pathname) && !env.DEVICE_CONFIG) return json({ ok: false, message: 'DEVICE_CONFIG KV binding is not configured' }, 503, corsHeaders);
 
     if (url.pathname === '/api/device-patch' && request.method === 'POST') {
       const data = await request.json().catch(() => null);
@@ -188,7 +188,9 @@ export default {
       if (!auth.ok) return json(auth.body, auth.status, corsHeaders);
       const receiverVariant=data.receiverVariant || 'legacy';
       if(!['legacy','dragonx'].includes(receiverVariant))return json({ok:false,message:'Unsupported receiver variant'},400,corsHeaders);
-      const template = await env.DEVICE_CONFIG.get(receiverVariant==='dragonx'?'receiver:template:dragonx:v1':'receiver:template:v2', 'json');
+      const fullTemplate=receiverVariant==='dragonx'?await env.DEVICE_CONFIG.get('receiver:template:dragonx:v3','json'):null;
+      const protocolVersion=fullTemplate?3:2;
+      const template = fullTemplate || await env.DEVICE_CONFIG.get(receiverVariant==='dragonx'?'receiver:template:dragonx:v1':'receiver:template:v2', 'json');
       if (!template) return json({ ok: false, message: 'Receiver template is not installed' }, 503, corsHeaders);
       const token = hex(crypto.getRandomValues(new Uint8Array(32)));
       const storageKey = `user:${await digest(auth.body.key || key)}`;
@@ -196,19 +198,19 @@ export default {
       const pkg = await personalize(template, token);
       // Only Cloudflare KV holds the original access key; the patch holds a scoped
       // receiver token. Runtime reads are reauthorized against the original API.
-      await env.DEVICE_CONFIG.put(`receiver:${await digest(token)}`, JSON.stringify({ key, deviceId: data.deviceId, build: data.build, storageKey, protocolVersion:2,receiverVariant }));
+      await env.DEVICE_CONFIG.put(`receiver:${await digest(token)}`, JSON.stringify({ key, deviceId: data.deviceId, build: data.build, storageKey, protocolVersion,receiverVariant }));
       const stub=env.DEVICE_STATE.get(env.DEVICE_STATE.idFromName(storageKey));
-      const activation=await stub.fetch('https://state/activate',{method:'POST',body:JSON.stringify({tokenHash:await digest(token),receiverVariant})});
+      const activation=await stub.fetch('https://state/activate',{method:'POST',body:JSON.stringify({tokenHash:await digest(token),receiverVariant,protocolVersion})});
       if (!activation.ok) throw new Error('Receiver activation failed');
       return new Response(pkg, { headers: { ...corsHeaders, 'content-type': 'application/octet-stream', 'content-disposition': `attachment; filename="${receiverVariant==='dragonx'?'DRAGONx_WEB_RECEIVER':'DRAGON_HEX_READBACK_FIX'}.3105"`, 'cache-control': 'no-store' } });
     }
 
-    if (['/api/runtime-config','/api/runtime-config-v2'].includes(url.pathname) && request.method === 'GET') {
+    if (['/api/runtime-config','/api/runtime-config-v2','/api/runtime-config-v3'].includes(url.pathname) && request.method === 'GET') {
       const token = bearer(request);
       if (!/^[a-f0-9]{64}$/.test(token)) return json({ ok: false, message: 'Invalid receiver token' }, 401, corsHeaders);
       const receiver = await env.DEVICE_CONFIG.get(`receiver:${await digest(token)}`, 'json');
       if (!receiver) return json({ ok: false, message: 'Receiver not paired' }, 401, corsHeaders);
-      const protocolVersion=url.pathname.endsWith('-v2')?2:1;
+      const protocolVersion=url.pathname.endsWith('-v3')?3:url.pathname.endsWith('-v2')?2:1;
       if((receiver.protocolVersion || 1)!==protocolVersion)return json({ok:false,message:'Receiver version mismatch'},409,corsHeaders);
       const auth = await authenticate(receiver.key, receiver.deviceId, receiver.build);
       if (!auth.ok) return json(auth.body, auth.status, corsHeaders);
@@ -220,12 +222,13 @@ export default {
       const hookFlags=/^[0-7]$/.test(hooks || '')?Number(hooks):null;
       const allowedMask=protocolVersion===2?0x3fff807f:0xff8000;
       const appliedMask=/^\d{1,10}$/.test(applied || '') && Number(applied)<=allowedMask && (Number(applied)&~allowedMask)===0 ? Number(applied) : null;
+      const appliedValues=protocolVersion===3?parseDragonxReadback(request.headers.get('X-Dragonhex-Values')):null;
       const storageKey=`user:${await digest(auth.body.key || receiver.key)}`;
       const stub=env.DEVICE_STATE.get(env.DEVICE_STATE.idFromName(storageKey));
-      const runtime=await stub.fetch('https://state/runtime',{method:'POST',body:JSON.stringify({tokenHash:await digest(token),deviceHash:await digest(runtimeDevice),appliedMask,protocolVersion,receiverVariant:receiver.receiverVariant || 'legacy',readback:protocolVersion===2 && hookFlags!==null,hookFlags})});
+      const runtime=await stub.fetch('https://state/runtime',{method:'POST',body:JSON.stringify({tokenHash:await digest(token),deviceHash:await digest(runtimeDevice),appliedMask,appliedValues,protocolVersion,receiverVariant:receiver.receiverVariant || 'legacy',readback:protocolVersion>=2 && hookFlags!==null,hookFlags})});
       if (!runtime.ok) return json({ok:false,message:await runtime.text()},runtime.status,corsHeaders);
       const config=await runtime.json();
-      return new Response(String(controlMask(config,protocolVersion,receiver.receiverVariant)), { headers: { ...corsHeaders, 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' } });
+      return new Response(protocolVersion===3?dragonxPacket(config):String(controlMask(config,protocolVersion,receiver.receiverVariant)), { headers: { ...corsHeaders, 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' } });
     }
 
     if (url.pathname === '/api/runtime-status' && request.method === 'GET') {
@@ -235,9 +238,9 @@ export default {
       if (!auth.ok) return json(auth.body, auth.status, corsHeaders);
       const storageKey = `user:${await digest(auth.body.key || key)}`;
       const seen = await readState(env, storageKey, 'seen');
-      const config = await readState(env, storageKey, 'config') || defaults();
+      const config = await readState(env, storageKey, 'config') || (seen?.protocolVersion===3?normalizeDragonx():defaults());
       const online = !!seen && Date.now() - Date.parse(seen.seenAt) < 30000;
-      return json({ ok: true, online, seenAt: seen?.seenAt || null, receiverVariant:seen?.receiverVariant || 'legacy',receiverVersion:seen?.protocolVersion || 1, upgradeRequired:online && !seen.readback, readback:seen?.readback===true,hookFlags:seen?.hookFlags ?? null, applied: online && seen?.readback===true && seen.appliedMask === controlMask(config,seen.protocolVersion || 1,seen.receiverVariant) }, 200, corsHeaders);
+      return json({ ok: true, online, seenAt: seen?.seenAt || null, receiverVariant:seen?.receiverVariant || 'legacy',receiverVersion:seen?.protocolVersion || 1, upgradeRequired:online && !seen.readback, readback:seen?.readback===true,hookFlags:seen?.hookFlags ?? null, applied: online && seen?.readback===true && (seen.protocolVersion===3?seen.appliedValues===dragonxPacket(config):seen.appliedMask === controlMask(config,seen.protocolVersion || 1,seen.receiverVariant)) }, 200, corsHeaders);
     }
 
     if (url.pathname === '/api/device-config' && !env.DEVICE_CONFIG) return json({ ok: false, message: 'DEVICE_CONFIG KV binding is not configured' }, 503, corsHeaders);
@@ -248,7 +251,8 @@ export default {
       if (!auth.ok) return json(auth.body, auth.status || 401, corsHeaders);
       const storageKey = `user:${await digest(auth.body.key || key)}`;
       const stored = await readState(env, storageKey, 'config');
-      return json({ ok: true, config: normalize(stored || {}) }, 200, corsHeaders);
+      const profile=await readState(env,storageKey,'profile');
+      return json({ ok: true, config: profile?.protocolVersion===3?normalizeDragonx(stored || {}):normalize(stored || {}) }, 200, corsHeaders);
     }
 
     if (url.pathname === '/api/device-config' && request.method === 'PUT') {
@@ -258,9 +262,10 @@ export default {
       const deviceId = String(data.deviceId || '').trim();
       const auth = await authenticate(key, deviceId, data.build);
       if (!auth.ok) return json(auth.body, auth.status || 401, corsHeaders);
-      if (!validConfig(data.config)) return json({ ok: false, message: 'Invalid feature configuration' }, 400, corsHeaders);
       const storageKey = `user:${await digest(auth.body.key || key)}`;
-      const config=normalize(Object.fromEntries([...FEATURES,'target','headshot','aimSystemTarget','fovRadius'].filter(k=>data.config[k]!==undefined).map(k=>[k,data.config[k]])));
+      const profile=await readState(env,storageKey,'profile');
+      if (!(profile?.protocolVersion===3?validDragonx(data.config):validConfig(data.config))) return json({ ok: false, message: 'Invalid feature configuration' }, 400, corsHeaders);
+      const config=profile?.protocolVersion===3?normalizeDragonx(data.config):normalize(Object.fromEntries([...FEATURES,'target','headshot','aimSystemTarget','fovRadius'].filter(k=>data.config[k]!==undefined).map(k=>[k,data.config[k]])));
       config.updatedAt=new Date().toISOString();
       await writeState(env, storageKey, 'config', config);
       return json({ ok: true, config }, 200, corsHeaders);

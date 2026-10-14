@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import assert from 'node:assert/strict';
 const source=fs.readFileSync(new URL('../worker/src/index.js',import.meta.url),'utf8');
-const mod=await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
+const mod=await import(new URL('../worker/src/index.js',import.meta.url));
 const worker=mod.default,values=new Map(),objects=new Map(),rejected=new Set();
 globalThis.fetch=async(url,options)=>{
   assert.equal(url,'https://dhx.dragonhex.workers.dev/api/control-auth');
@@ -114,12 +114,47 @@ if(process.env.DRAGONX_RECEIVER_TEMPLATE){
   assert.equal(await (await poll(token,'dragonx-test-device',expected,2)).text(),String(expected));
   const catalog=await (await worker.fetch(req('/api/feature-catalog?build=22','KEY_A'),env)).json();
   assert.equal(catalog.receiverVariant,'dragonx');
-  assert.equal(catalog.features.length,11);
+  assert.equal(catalog.features.length,34);
   assert.equal(catalog.features.find(f=>f.id==='silentAim').label,'Aim Vector');
-  assert.deepEqual(catalog.settings,['fovRadius']);
+  assert.equal(catalog.ready,false);assert.equal(catalog.features.find(f=>f.id==='fovRadius').min,20);
   const status=await (await worker.fetch(req('/api/runtime-status?build=22','KEY_A'),env)).json();
   assert.equal(status.applied,true);assert.equal(status.receiverVariant,'dragonx');
   assert.equal((await poll(token,'different-game-device',expected,2)).status,409);
   rejected.add('KEY_A');assert.equal((await poll(token,'dragonx-test-device',expected,2)).status,403);
   console.log('PASS: DRAGONx personalized package digest, scoped runtime, exact capability mask/catalog, device isolation and expiry');
+}
+
+if(process.env.DRAGONX_V3_TEMPLATE){
+  const {DRAGONX_CONTROLS,normalizeDragonx,dragonxPacket}=await import('../worker/src/dragonx.js');
+  const template=JSON.parse(fs.readFileSync(process.env.DRAGONX_V3_TEMPLATE,'utf8'));
+  await kv.put('receiver:template:dragonx:v3',JSON.stringify(template));
+  const response=await worker.fetch(req('/api/device-patch','KEY_A','POST',{build:'22',receiverVariant:'dragonx'}),env);
+  assert.equal(response.status,200);
+  const pkg=new Uint8Array(await response.arrayBuffer());
+  const cipher=pkg.slice(template.encryptedOffset,template.encryptedOffset+template.encryptedLength);
+  const aes=await crypto.subtle.importKey('raw',Buffer.from(template.contentKey,'base64'),'AES-GCM',false,['decrypt']);
+  const plain=new Uint8Array(await crypto.subtle.decrypt({name:'AES-GCM',iv:cipher.slice(0,12),additionalData:new TextEncoder().encode(template.aad)},aes,cipher.slice(12)));
+  const token=new TextDecoder().decode(plain.slice(template.tokenOffset,template.tokenOffset+64));
+  const catalog=await (await worker.fetch(req('/api/feature-catalog?build=22','KEY_A'),env)).json();
+  assert.equal(catalog.ready,true);assert.equal(catalog.features.length,34);
+  const config=normalizeDragonx(Object.fromEntries(DRAGONX_CONTROLS.map(f=>[f.id,f.kind==='boolean'?true:f.max])));
+  assert.equal((await put('KEY_A',config,'v3-browser')).status,200);
+  for(const f of DRAGONX_CONTROLS){
+    const bad={...config,[f.id]:f.kind==='boolean'?1:f.max+1};
+    assert.equal((await put('KEY_A',bad,'v3-browser')).status,400,f.id);
+  }
+  const expected=dragonxPacket(config);
+  const poll3=(values=expected,device='v3-game-device')=>worker.fetch(new Request('https://example.com/api/runtime-config-v3',{headers:{Authorization:'Bearer '+token,'X-Dragonhex-Device':device,'X-Dragonhex-Values':values,'X-Dragonhex-Hooks':'7'}}),env);
+  assert.equal(await (await poll3()).text(),expected);
+  const status=await (await worker.fetch(req('/api/runtime-status?build=22','KEY_A'),env)).json();
+  assert.equal(status.applied,true);assert.equal(status.receiverVersion,3);
+  assert.equal((await poll(token,'v3-game-device',0,2)).status,409);
+  assert.equal((await poll3(expected,'other-game-device')).status,409);
+  assert.equal((await (await worker.fetch(req('/api/feature-catalog?build=22','KEY_B'),env)).json()).ready,false);
+  const before=await (await worker.fetch(req('/api/runtime-status?build=22','KEY_A'),env)).json();
+  await poll3('1;');
+  const after=await (await worker.fetch(req('/api/runtime-status?build=22','KEY_A'),env)).json();
+  assert.equal(after.seenAt,before.seenAt,'Malformed readback cannot acknowledge a new state');
+  rejected.add('KEY_A');assert.equal((await poll3()).status,403);rejected.delete('KEY_A');
+  console.log('PASS: 34 native controls, bounds, v3-only token, actual-value readback, per-key profile/device scope and expiry');
 }
