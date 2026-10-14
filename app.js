@@ -66,9 +66,10 @@ function renderNativeCatalog(catalog) {
     const section=document.createElement('section');section.className='control-section';section.id='native-'+group.toLowerCase();
     const title=document.createElement('div');title.className='section-title';const heading=document.createElement('h2');heading.textContent=group;title.append(heading);section.append(title);
     if(group==='ONLINE'){const info=document.createElement('p');info.id='native-online-state';info.className='muted';info.textContent='สถานะการเชื่อมต่อจะอัปเดตจากเกม';section.append(info);root.append(section);continue;}
-    const cards=document.createElement('div');cards.className='native-grid';
+    const cards=document.createElement('div');cards.className='native-grid native-grid--toggles';
+    const settings=document.createElement('div');settings.className='native-grid native-grid--settings';
     for(const field of catalog.features.filter(f=>f.group===group)){
-      const card=document.createElement('label');card.className='native-card';
+      const card=document.createElement('label');card.className='native-card '+(field.kind==='boolean'?'native-switch-card':'native-setting-card');
       const name=document.createElement('strong');name.textContent=field.label;card.append(name);
       let input;
       if(field.kind==='select'){
@@ -77,9 +78,9 @@ function renderNativeCatalog(catalog) {
       input.setAttribute('aria-label',field.label);input.dataset.nativeSetting=field.id;
       const existing=state.config[field.id];state.config[field.id]=field.kind==='boolean'?(typeof existing==='boolean'?existing:field.default):Number.isInteger(existing)?Math.max(field.min,Math.min(field.max,existing)):field.default;
       input.onchange=()=>{if(field.kind==='boolean')state.config[field.id]=input.checked;else if(input.validity.valid)state.config[field.id]=Number(input.value);$('save-status').textContent='UNSAVED CHANGES';};
-      card.append(input);if(field.id==='fovRadius'){card.classList.add('native-fov-card');const value=document.createElement('output');value.id='native-fov-value';value.textContent=state.config[field.id]+' px';card.append(value);input.oninput=()=>{state.config[field.id]=Number(input.value);value.textContent=input.value+' px';$('save-status').textContent='ยังไม่ได้บันทึก';};}if(field.kind==='integer'){const bounds=document.createElement('small');bounds.textContent=field.min+' – '+field.max;card.append(bounds);}cards.append(card);state.nativeElements.set(field.id,{input,field});
+      card.append(input);if(field.kind==='boolean'){const track=document.createElement('span');track.className='native-switch';track.setAttribute('aria-hidden','true');card.append(track);const note=document.createElement('small');note.className='native-switch-state';note.setAttribute('aria-hidden','true');card.append(note);}if(field.id==='fovRadius'){card.classList.add('native-fov-card');const value=document.createElement('output');value.id='native-fov-value';value.textContent=state.config[field.id]+' px';card.append(value);input.oninput=()=>{state.config[field.id]=Number(input.value);value.textContent=input.value+' px';$('save-status').textContent='ยังไม่ได้บันทึก';};}if(field.kind==='integer'){const bounds=document.createElement('small');bounds.textContent=field.min+' – '+field.max;card.append(bounds);}(field.kind==='boolean'?cards:settings).append(card);state.nativeElements.set(field.id,{input,field});
     }
-    section.append(cards);root.append(section);
+    if(cards.childElementCount)section.append(cards);if(settings.childElementCount)section.append(settings);root.append(section);
   }
   document.querySelectorAll('a[href="#esp-section"],a[href="#aim-section"],a[href="#tuning-section"]').forEach(link=>{link.dataset.originalHref=link.getAttribute('href');link.href=link.dataset.originalHref==='#esp-section'?'#native-esp':link.dataset.originalHref==='#aim-section'?'#native-aim':'#native-settings';});
   $('imported-catalog').hidden=true;$('imported-catalog').textContent='';
