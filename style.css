@@ -6,9 +6,9 @@
 .native-nav{display:flex;gap:8px;flex-wrap:wrap;margin:24px 0}.native-nav a{color:var(--green);border:1px solid var(--line);border-radius:24px;padding:10px 16px;text-decoration:none;font-size:12px}.native-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.native-card{display:grid;grid-template-columns:1fr auto;align-items:center;gap:12px;padding:22px;border:1px solid var(--line);border-radius:16px;background:var(--panel)}.native-card strong{font-size:14px}.native-card small{color:var(--muted);font-size:11px}.native-card select,.native-card input[type=number]{width:120px;padding:10px;background:#090f0c;border:1px solid #435140;border-radius:8px;color:#eef6ed}.native-card input[type=checkbox]{width:24px;height:24px;accent-color:var(--green)}@media(max-width:900px){.native-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:600px){.native-grid{grid-template-columns:1fr}.native-card{padding:18px}}
 .workspace:has(#native-controls:not([hidden])){grid-template-columns:minmax(0,1fr)}
 #native-controls{width:100%;min-width:0}
+.workspace:has(#native-controls:not([hidden]))>.control-content{grid-column:1/-1;width:100%}
 .native-card{min-width:0;grid-template-columns:minmax(0,1fr) auto}
 .native-card strong{overflow-wrap:anywhere}
 .native-card select,.native-card input[type=number]{max-width:100%;min-width:0;font:inherit}
 @media(max-width:1100px) and (min-width:901px){.native-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:400px){.native-card select,.native-card input[type=number]{width:100px}}
-
