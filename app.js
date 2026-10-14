@@ -105,10 +105,17 @@ async function loadDashboard() {
           const available = state.catalogIds.has(input.dataset.feature);
           const card = input.closest?.('.control-card');
           if (card) card.hidden = !available;
+          if(card && catalog.receiverVariant==='dragonx'){
+            const title=card.querySelector('strong');
+            if(title){card.dataset.originalTitle ||= title.textContent;title.textContent=imported.find(f=>f.id===input.dataset.feature)?.label || title.textContent;}
+            const description=card.querySelector('small');
+            if(description){card.dataset.originalDescription ||= description.textContent;description.textContent='สถานะจากเมนู DRAGONx';}
+          }
           if (!available) state.config[input.dataset.feature] = false;
         });
         renderConfig();
         setControlsEnabled(state.controlSupported && !status?.maintenance);
+        if(catalog.receiverVariant==='dragonx')document.querySelectorAll('#tuning-section .setting').forEach(setting=>{setting.hidden=!setting.querySelector('#fov-radius');});
       }
       $('imported-catalog').hidden = false;
       $('imported-catalog').textContent = 'รายการนำเข้าจากแพตช์: ' + catalog.features.map(f => f.label).join(' · ');
@@ -150,7 +157,8 @@ setInterval(updateExpiry,1000);
 
 function endSession(message='') {
   state.key='';state.expiresAt=null;state.controlSupported=false;state.catalogIds=null;
-  document.querySelectorAll('.feature-toggle').forEach(input=>{const card=input.closest?.('.control-card');if(card)card.hidden=false;});
+  document.querySelectorAll('.feature-toggle').forEach(input=>{const card=input.closest?.('.control-card');if(card){card.hidden=false;if(card.dataset.originalTitle)card.querySelector('strong').textContent=card.dataset.originalTitle;if(card.dataset.originalDescription)card.querySelector('small').textContent=card.dataset.originalDescription;}});
+  document.querySelectorAll('#tuning-section .setting').forEach(setting=>{setting.hidden=false;});
   $('imported-catalog').hidden=true;$('imported-catalog').textContent='';
   state.config={aimSystem:false,silentAim:false,noRecoil:false,target:'head',headshot:0};
   $('key').value='';$('dashboard').hidden=true;$('login-view').hidden=false;

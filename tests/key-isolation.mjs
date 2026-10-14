@@ -91,3 +91,31 @@ assert.equal(mod.controlMask({...full,aimSystemTarget:'head'},2)&(1<<23),1<<23);
 for(const k of ['espMaster','skeleton','distance','playerName','healthBar','topTracer','playerBox','fovCircle'])assert.equal((await put('KEY_A',{...full,[k]:'true'},'browser')).status,400);
 for(const radius of [49,401,'200',100.5])assert.equal((await put('KEY_A',{...full,fovRadius:radius},'browser')).status,400);
 console.log('PASS: all ESP/AIM fields persist; independent targets; exact FOV bounds; strict feature types');
+
+if(process.env.DRAGONX_RECEIVER_TEMPLATE){
+  const template=JSON.parse(fs.readFileSync(process.env.DRAGONX_RECEIVER_TEMPLATE,'utf8'));
+  await kv.put('receiver:template:dragonx:v1',JSON.stringify(template));
+  const response=await worker.fetch(req('/api/device-patch','KEY_A','POST',{build:'22',receiverVariant:'dragonx'}),env);
+  assert.equal(response.status,200);
+  const pkg=new Uint8Array(await response.arrayBuffer());
+  const cipher=pkg.slice(template.encryptedOffset,template.encryptedOffset+template.encryptedLength);
+  const aes=await crypto.subtle.importKey('raw',Buffer.from(template.contentKey,'base64'),'AES-GCM',false,['decrypt']);
+  const plain=new Uint8Array(await crypto.subtle.decrypt({name:'AES-GCM',iv:cipher.slice(0,12),additionalData:new TextEncoder().encode(template.aad)},aes,cipher.slice(12)));
+  const token=new TextDecoder().decode(plain.slice(template.tokenOffset,template.tokenOffset+64));
+  const patchDigest=Buffer.from(await crypto.subtle.digest('SHA-256',plain.slice(template.patchOffset,template.patchOffset+template.patchLength)));
+  assert.deepEqual(Buffer.from(plain.slice(template.digestOffset,template.digestOffset+32)),patchDigest);
+  assert.notEqual(token,'0123456789abcdef'.repeat(4));
+  const expected=mod.controlMask(full,2,'dragonx');
+  assert.equal(expected & ((1<<15)|(3<<16)|(7<<19)|(1<<23)),0);
+  assert.equal(await (await poll(token,'dragonx-test-device',expected,2)).text(),String(expected));
+  const catalog=await (await worker.fetch(req('/api/feature-catalog?build=22','KEY_A'),env)).json();
+  assert.equal(catalog.receiverVariant,'dragonx');
+  assert.equal(catalog.features.length,10);
+  assert.equal(catalog.features.some(f=>f.id==='silentAim'),false);
+  assert.deepEqual(catalog.settings,['fovRadius']);
+  const status=await (await worker.fetch(req('/api/runtime-status?build=22','KEY_A'),env)).json();
+  assert.equal(status.applied,true);assert.equal(status.receiverVariant,'dragonx');
+  assert.equal((await poll(token,'different-game-device',expected,2)).status,409);
+  rejected.add('KEY_A');assert.equal((await poll(token,'dragonx-test-device',expected,2)).status,403);
+  console.log('PASS: DRAGONx personalized package digest, scoped runtime, exact capability mask/catalog, device isolation and expiry');
+}
