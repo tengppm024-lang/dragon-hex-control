@@ -1,6 +1,7 @@
 'use strict';
 const studioEl=id=>document.getElementById(id);
 let studioFile=null,studioReport=null,studioReceipt=null;
+fetch('/api/studio/service-health',{credentials:'same-origin',signal:AbortSignal.timeout(15000)}).then(r=>r.json()).then(d=>{studioEl('service-status').textContent=d.message;}).catch(()=>{studioEl('service-status').textContent='ตรวจการเชื่อม API ไม่สำเร็จ';});
 for(const group of window.STUDIO_BOOT.groups){const o=document.createElement('option');o.value=group.id;o.textContent=group.label||group.title||group.name||group.id;studioEl('group').append(o);}
 function studioStatus(text,error=false){studioEl('status').textContent=text;studioEl('status').className='status '+(error?'error':'ok');}
 function studioBusy(busy){studioEl('analyze').disabled=busy||!studioFile;studioEl('confirm').disabled=busy||!studioReport?.supported||!studioEl('features').querySelector('input:checked');}

@@ -9,6 +9,10 @@ async function studioRoute(env,request,url){
  const user=await studioAdmin(env,request);
  if(!user&&url.pathname==='/patch-studio'&&request.method==='GET')return loginPage('/patch-studio','เข้าสู่ Patch Studio');
  if(!user)return json({ok:false,message:'ต้องเข้าสู่ระบบผู้ดูแลที่มีสิทธิ์จัดการแพตช์'},401);
+ if(url.pathname==='/api/studio/service-health'&&request.method==='GET'){
+  if(!env.CONTROL_API)return json({ok:false,message:'ยังไม่ได้เชื่อม CONTROL_API'},503);
+  try{const response=await env.CONTROL_API.fetch('https://dragon-hex-control-api.dragonhex.workers.dev/');return json({ok:response.ok,message:response.ok?'API เชื่อมพร้อม':'API ควบคุมยังไม่พร้อม'},response.ok?200:503);}catch{return json({ok:false,message:'ติดต่อ API ควบคุมไม่ได้'},503);}
+ }
  if(url.pathname==='/patch-studio'&&request.method==='GET'){
   const groups=(await getResourceButtons(env)).filter(g=>g.kind==='patch');
   const boot=JSON.stringify({groups:groups.map(g=>({id:g.id,name:g.name,label:g.label||g.title||g.name}))}).replace(/</g,'\\u003c');
@@ -27,6 +31,7 @@ async function studioRoute(env,request,url){
   const {form,file,bytes}=await studioReadFile(request),analysis=await studioAnalyze(bytes,file.name);
   if(url.pathname==='/api/studio/analyze')return json({ok:true,analysis},200);
   if(!analysis.supported)return json({ok:false,message:'เมนูนี้ยังไม่มีตัวเชื่อมที่ตรวจสอบแล้ว'},422);
+  if(!env.CONTROL_API)return json({ok:false,message:'ยังไม่ได้เชื่อม CONTROL_API จึงยังสร้างแพตช์ไม่ได้'},503);
   if(form.get('digest')!==analysis.fileDigest)return json({ok:false,message:'ไฟล์เปลี่ยนหลังตรวจ กรุณาตรวจใหม่'},409);
   let ids;try{ids=JSON.parse(form.get('features'));}catch{throw Error('รายการฟังก์ชั่นไม่ถูกต้อง');}
   const supported=new Map(analysis.features.map(f=>[f.id,f]));if(!Array.isArray(ids)||!ids.length||new Set(ids).size!==ids.length||ids.some(id=>!supported.has(id)))throw Error('เลือกรายการฟังก์ชั่นที่ตรวจพบ');
