@@ -9,9 +9,11 @@ for(const [name,selector] of [['feature','.feature-toggle'],['target','[data-tar
  for(const m of html.matchAll(pattern)){const e=element(name+':'+m[1]);e.dataset[name.replace(/-([a-z])/g,(_,c)=>c.toUpperCase())]=m[1];groups[selector].push(e);}
 }
 assert.equal(groups['.feature-toggle'].length,11);assert.equal(groups['[data-target]'].length,3);assert.equal(groups['[data-aim-target]'].length,2);
-let sent,expired=false;
+let sent,expired=false,imported=false;
+for(const input of groups['.feature-toggle']) input.closest=()=>element('card:'+input.dataset.feature);
 const timers=[];const context={Date,URL,AbortSignal,crypto,localStorage:{getItem:()=>null,setItem(){}},window:{location:{hash:''},DRAGON_HEX_CONFIG:{apiBase:'https://test.local',buildNumber:'22'}},document:{getElementById:element,querySelectorAll:selector=>groups[selector] || (selector.includes('.feature-toggle,')?[...groups['.feature-toggle'],...groups['[data-target]'],...groups['[data-headshot]'],...groups['[data-aim-target]'],element('fov-radius')]:[]),createElement:()=>({}),createTextNode:v=>v},setInterval:(fn,ms)=>timers.push({fn,ms}),setTimeout(){},fetch:async(url,opt={})=>{
  const path=new URL(url).pathname;
+ if(path==='/api/feature-catalog')return new Response(JSON.stringify({ok:true,features:imported?[{id:'espMaster',label:'ESP Master'},{id:'fovCircle',label:'FOV Circle'}]:[]}));
  if(path==='/api/auth')return new Response(JSON.stringify({valid:true,expiresAt:new Date(Date.now()+(expired?-1000:90000000)).toISOString()}));
  if(opt.method==='PUT')sent=JSON.parse(opt.body).config;
  return new Response(JSON.stringify({ok:true,version:'2.0',config:{},online:false}));
@@ -29,5 +31,8 @@ await element('reset-all').onclick();
 for(const control of groups['.feature-toggle']){assert.equal(sent[control.dataset.feature],false);assert.equal(control.checked,false);}
 assert.equal(sent.target,'head');assert.equal(sent.aimSystemTarget,'head');assert.equal(sent.headshot,0);assert.equal(sent.fovRadius,197);assert.equal(element('reset-all').disabled,false);
 element('logout').onclick();assert.equal(element('reset-all').disabled,true);assert.equal(element('dashboard').hidden,true);assert.equal(context.window.location.hash,'login');assert.equal(element('key').value,'');
+imported=true;element('key').value='IMPORT_TEST';await element('login-form').onsubmit({preventDefault(){}});
+for(const input of groups['.feature-toggle']){const available=['espMaster','fovCircle'].includes(input.dataset.feature);assert.equal(input.closest().hidden,!available);assert.equal(input.disabled,!available);}
+element('logout').onclick();for(const input of groups['.feature-toggle'])assert.equal(input.closest().hidden,false);
 expired=true;element('key').value='EXPIRED';await element('login-form').onsubmit({preventDefault(){}});assert.equal(element('dashboard').hidden,true);assert.match(element('login-feedback').textContent,/หมดอายุ/);
 console.log('PASS: 11 controls, independent targets, FOV slider and rates reach PUT payload; separated views; countdown; expired login rejected; no key-admin navigation');

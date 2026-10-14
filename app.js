@@ -10,6 +10,7 @@ const state = {
   expiresAt: null,
   deviceId: localStorage.getItem('dragonhex.web.device') || crypto.randomUUID(),
   config: defaultConfig(),
+  catalogIds: null,
   controlSupported: false
 };
 localStorage.setItem('dragonhex.web.device', state.deviceId);
@@ -31,7 +32,7 @@ function setApiStatus(mode, text) {
 }
 
 function setControlsEnabled(enabled) {
-  document.querySelectorAll('.feature-toggle, .segmented button, #fov-radius').forEach(control => { control.disabled = !enabled; });
+  document.querySelectorAll('.feature-toggle, .segmented button, #fov-radius').forEach(control => { control.disabled = !enabled || Boolean(control.dataset?.feature && state.catalogIds && !state.catalogIds.has(control.dataset.feature)); });
   $('save').disabled = !enabled;
   $('reset-all').disabled = !enabled;
 }
@@ -96,6 +97,19 @@ async function loadDashboard() {
   try {
     const catalog = await request(`/api/feature-catalog?build=${encodeURIComponent(BUILD)}`, { headers: { Authorization: `Bearer ${sessionKey}` } });
     if (state.key === sessionKey && Array.isArray(catalog.features) && catalog.features.length) {
+      const known = defaultConfig();
+      const imported = catalog.features.filter(f => typeof known[f.id] === 'boolean');
+      if (imported.length) {
+        state.catalogIds = new Set(imported.map(f => f.id));
+        document.querySelectorAll('.feature-toggle').forEach(input => {
+          const available = state.catalogIds.has(input.dataset.feature);
+          const card = input.closest?.('.control-card');
+          if (card) card.hidden = !available;
+          if (!available) state.config[input.dataset.feature] = false;
+        });
+        renderConfig();
+        setControlsEnabled(state.controlSupported && !status?.maintenance);
+      }
       $('imported-catalog').hidden = false;
       $('imported-catalog').textContent = 'รายการนำเข้าจากแพตช์: ' + catalog.features.map(f => f.label).join(' · ');
     }
@@ -135,7 +149,8 @@ function updateExpiry(){
 setInterval(updateExpiry,1000);
 
 function endSession(message='') {
-  state.key='';state.expiresAt=null;state.controlSupported=false;
+  state.key='';state.expiresAt=null;state.controlSupported=false;state.catalogIds=null;
+  document.querySelectorAll('.feature-toggle').forEach(input=>{const card=input.closest?.('.control-card');if(card)card.hidden=false;});
   $('imported-catalog').hidden=true;$('imported-catalog').textContent='';
   state.config={aimSystem:false,silentAim:false,noRecoil:false,target:'head',headshot:0};
   $('key').value='';$('dashboard').hidden=true;$('login-view').hidden=false;
