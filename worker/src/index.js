@@ -168,6 +168,11 @@ export default {
       return json(auth.body,auth.status,corsHeaders);
     }
     if (url.pathname === '/api/status' && request.method === 'GET') return proxy('/api/status', request, corsHeaders);
+    if (url.pathname === '/api/feature-catalog' && request.method === 'GET') {
+      const auth = await authenticate(bearer(request), null, url.searchParams.get('build'));
+      if (!auth.ok) return json(auth.body, auth.status, corsHeaders);
+      return proxy('/api/studio/catalog', request, corsHeaders);
+    }
 
     if (['/api/device-patch', '/api/runtime-config', '/api/runtime-config-v2', '/api/runtime-status'].includes(url.pathname) && !env.DEVICE_CONFIG) return json({ ok: false, message: 'DEVICE_CONFIG KV binding is not configured' }, 503, corsHeaders);
 

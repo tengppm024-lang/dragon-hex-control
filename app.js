@@ -93,6 +93,13 @@ async function loadDashboard() {
   }
   renderConfig();
   setControlsEnabled(state.controlSupported && !status?.maintenance);
+  try {
+    const catalog = await request(`/api/feature-catalog?build=${encodeURIComponent(BUILD)}`, { headers: { Authorization: `Bearer ${sessionKey}` } });
+    if (state.key === sessionKey && Array.isArray(catalog.features) && catalog.features.length) {
+      $('imported-catalog').hidden = false;
+      $('imported-catalog').textContent = 'รายการนำเข้าจากแพตช์: ' + catalog.features.map(f => f.label).join(' · ');
+    }
+  } catch (error) { if (state.key === sessionKey && [401,403].includes(error.status)) endSession(error.message); }
   await refreshRuntime();
 }
 
@@ -129,6 +136,7 @@ setInterval(updateExpiry,1000);
 
 function endSession(message='') {
   state.key='';state.expiresAt=null;state.controlSupported=false;
+  $('imported-catalog').hidden=true;$('imported-catalog').textContent='';
   state.config={aimSystem:false,silentAim:false,noRecoil:false,target:'head',headshot:0};
   $('key').value='';$('dashboard').hidden=true;$('login-view').hidden=false;
   $('login-feedback').textContent=message;
