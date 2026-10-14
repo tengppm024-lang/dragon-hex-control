@@ -80,9 +80,9 @@ function renderNativeCatalog(catalog) {
     section.append(cards);root.append(section);
   }
   document.querySelectorAll('a[href="#esp-section"],a[href="#aim-section"],a[href="#tuning-section"]').forEach(link=>{link.dataset.originalHref=link.getAttribute('href');link.href=link.dataset.originalHref==='#esp-section'?'#native-esp':link.dataset.originalHref==='#aim-section'?'#native-aim':'#native-settings';});
-  $('imported-catalog').hidden=false;$('imported-catalog').textContent='DRAGONx · '+catalog.features.length+' สวิตช์และค่าปรับ';
-  $('control-warning').hidden=state.nativeReady;
-  if(!state.nativeReady)$('control-warning').textContent='รายการใหม่พร้อมแล้ว: รีเฟรช IPA และเปิด DRAGONx WEB RECEIVER v3 ก่อนใช้งาน';
+  $('imported-catalog').hidden=true;$('imported-catalog').textContent='';
+  $('control-warning').hidden=true;
+  $('control-warning').textContent='';
   renderConfig();
 }
 
@@ -126,11 +126,11 @@ async function loadDashboard() {
     if(state.key!==sessionKey)return;
     if([401,403].includes(error.status)){endSession(error.message);return;}
     state.controlSupported = false;
-    $('sync-label').textContent = error.status === 404 ? 'API UPDATE NEEDED' : 'UNAVAILABLE';
+    $('sync-label').textContent = error.status === 404 ? 'ยังไม่พร้อมใช้งาน' : 'UNAVAILABLE';
     $('control-warning').hidden = false;
     $('control-warning').textContent = error.status === 404
-      ? 'API นี้ยังไม่มี /api/device-config จึงปิดสวิตช์ไว้เพื่อไม่ให้แสดงผลสำเร็จปลอม ต้องเพิ่ม endpoint และให้แพตช์อ่านค่านี้ก่อนจึงจะควบคุมเครื่องจริงได้'
-      : `โหลดสถานะอุปกรณ์ไม่สำเร็จ: ${error.message}`;
+      ? 'ไม่สามารถเชื่อมต่ออุปกรณ์ได้ กรุณาลองใหม่อีกครั้ง'
+      : 'โหลดสถานะอุปกรณ์ไม่สำเร็จ กรุณาลองใหม่อีกครั้ง';
   }
   renderConfig();
   setControlsEnabled(state.controlSupported && !status?.maintenance);
@@ -158,8 +158,8 @@ async function loadDashboard() {
         setControlsEnabled(state.controlSupported && !status?.maintenance);
         if(catalog.receiverVariant==='dragonx')document.querySelectorAll('#tuning-section .setting').forEach(setting=>{setting.hidden=!setting.querySelector('#fov-radius');});
       }
-      $('imported-catalog').hidden = false;
-      $('imported-catalog').textContent = 'รายการนำเข้าจากแพตช์: ' + catalog.features.map(f => f.label).join(' · ');
+      $('imported-catalog').hidden = true;
+      $('imported-catalog').textContent = '';
     }
   } catch (error) { if (state.key === sessionKey && [401,403].includes(error.status)) endSession(error.message); }
   await refreshRuntime();
@@ -171,11 +171,11 @@ async function refreshRuntime() {
   try {
     const data = await request(`/api/runtime-status?deviceId=${encodeURIComponent(state.deviceId)}&build=${encodeURIComponent(BUILD)}`, { headers: { Authorization: `Bearer ${state.key}` } });
     if(state.key!==sessionKey)return;
-    if(state.nativeCatalog && !state.nativeReady){if(data.receiverVersion===3){await loadDashboard();return;}$('runtime-state').textContent='รีเฟรชรายการ IPA แล้วเปิด DRAGONx WEB RECEIVER v3 เพื่อใช้ฟังก์ชั่นชุดใหม่';$('sync-label').textContent='UPDATE RECEIVER';if($('native-online-state'))$('native-online-state').textContent=$('runtime-state').textContent;return;}
-    if(data.upgradeRequired){$('runtime-state').textContent='ตัวรับเดิมยืนยันได้เฉพาะการรับค่า เปิดตัวรับรุ่นใหม่จากรายการแพตช์ใน IPA';$('sync-label').textContent='UPDATE RECEIVER';return;}
+    if(state.nativeCatalog && !state.nativeReady){if(data.receiverVersion===3){await loadDashboard();return;}$('runtime-state').textContent='กรุณาเปิดแอปเพื่อเชื่อมต่ออุปกรณ์';$('sync-label').textContent='รอเชื่อมต่ออุปกรณ์';if($('native-online-state'))$('native-online-state').textContent=$('runtime-state').textContent;return;}
+    if(data.upgradeRequired){$('runtime-state').textContent='กรุณาเชื่อมต่ออุปกรณ์ก่อนใช้งาน';$('sync-label').textContent='รอเชื่อมต่ออุปกรณ์';return;}
     $('runtime-state').textContent = data.online ? (data.applied ? 'เกมรับและใช้ค่าล่าสุดแล้ว' : 'เกมเชื่อมต่อแล้ว กำลังรอใช้ค่าล่าสุด') : 'ยังไม่มีการตอบกลับจากเกม';
     $('sync-label').textContent = data.online ? (data.applied ? 'GAME STATE CONFIRMED' : 'STATE NOT MATCHED') : 'WAITING FOR GAME';
-    if(data.online && data.applied){const h=data.hookFlags || 0;$('runtime-state').textContent=`อ่านค่ากลับตรงกับเว็บ · โค้ดเกม AIM ${(h&3)?'ถูกเรียกแล้ว':'ยังไม่ถูกเรียก'} / RECOIL ${(h&4)?'ถูกเรียกแล้ว':'ยังไม่ถูกเรียก'}`;}
+    if(data.online && data.applied)$('runtime-state').textContent='อุปกรณ์ยืนยันค่าตรงกับการตั้งค่าล่าสุดแล้ว';
     if($('native-online-state'))$('native-online-state').textContent=$('runtime-state').textContent;
   } catch (error) {
     if(state.key!==sessionKey)return;
