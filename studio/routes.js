@@ -28,7 +28,11 @@ async function studioRoute(env,request,url){
  // Same-origin forms only; the API never accepts a customer key as admin authorization.
  const origin=request.headers.get('Origin');if(!origin||origin!==url.origin)return json({ok:false,message:'Invalid admin request origin'},403);
  try{
-  const {form,file,bytes}=await studioReadFile(request),analysis=await studioAnalyze(bytes,file.name);
+  const {form,file,bytes}=await studioReadFile(request);
+  const encodedKey=String(form.get('contentKey')||'');let contentKey=null;
+  if(encodedKey){if(!/^[A-Za-z0-9+/]{43}=$/.test(encodedKey))throw Error('ข้อมูลเปิดไฟล์ไม่ถูกต้อง');contentKey=Uint8Array.from(atob(encodedKey),c=>c.charCodeAt(0));}
+  const analysis=await studioAnalyze(bytes,file.name,contentKey);
+  if(contentKey)contentKey.fill(0);
   if(url.pathname==='/api/studio/analyze')return json({ok:true,analysis},200);
   if(!analysis.supported)return json({ok:false,message:'เมนูนี้ยังไม่มีตัวเชื่อมที่ตรวจสอบแล้ว'},422);
   if(!env.CONTROL_API)return json({ok:false,message:'ยังไม่ได้เชื่อม CONTROL_API จึงยังสร้างแพตช์ไม่ได้'},503);

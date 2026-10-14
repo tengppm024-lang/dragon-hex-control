@@ -45,13 +45,36 @@ export function studioIFixStrings(bytes) {
  for(let n=count();n--;){const generic=flag();num();str();if(generic)for(let g=count();g--;)num();for(let a=count();a--;)generic&&flag()?str():num();}
  return Array.from({length:count()},str);
 }
-export async function studioAnalyze(bytes,fileName='patch.3105') {
+export async function studioUnlockKey(bytes,password='') {
  if(bytes.length>5*1024*1024)throw Error('ไฟล์ต้องไม่เกิน 5 MB');
  if(new TextDecoder().decode(bytes.slice(0,10))!=='3105PATCH\0')throw Error('ไฟล์นี้ไม่ใช่แพ็กเกจ 3105 ที่รองรับ');
  const envelope=studioPlist(bytes.slice(10));
- if(envelope.isPasswordProtected)throw Error('ไฟล์มีรหัสผ่าน ต้องส่งรูปแบบการถอดรหัสของเมนูนี้ก่อน ระบบจะไม่ข้ามรหัสผ่าน');
- if(!(envelope.publicContentKey instanceof Uint8Array)||!(envelope.encryptedPayload instanceof Uint8Array))throw Error('ไม่มีข้อมูลถอดรหัสสาธารณะที่รองรับ');
- let plain;try{const key=await crypto.subtle.importKey('raw',envelope.publicContentKey,'AES-GCM',false,['decrypt']);const e=envelope.encryptedPayload;plain=new Uint8Array(await crypto.subtle.decrypt({name:'AES-GCM',iv:e.slice(0,12),additionalData:new TextEncoder().encode(`3105PATCH/v1/payload/${envelope.packageID}`)},key,e.slice(12)));}catch{throw Error('รูปแบบการเข้ารหัสต่างจากที่รองรับ หรือไฟล์เสีย');}
+ if(!Number.isInteger(envelope.schemaVersion)||envelope.schemaVersion<1||envelope.schemaVersion>9)throw Error('รูปแบบไฟล์รุ่นนี้ยังไม่รองรับ');
+ if(!envelope.isPasswordProtected){if(!(envelope.publicContentKey instanceof Uint8Array)||envelope.publicContentKey.length!==32)throw Error('ข้อมูลกุญแจไฟล์ไม่ถูกต้อง');return envelope.publicContentKey;}
+ const pass=new TextEncoder().encode(password);
+ if(!pass.length)throw Error('ไฟล์นี้มีรหัสผ่าน กรุณากรอกรหัสผ่านไฟล์ 3105');
+ if(pass.length>1024)throw Error('รหัสผ่านยาวเกินขนาดที่รองรับ');
+ const version=envelope.keyAADVersion??envelope.schemaVersion,iterations=envelope.kdfIterations;
+ if(!Number.isInteger(version)||version<1||version>9||!Number.isInteger(iterations)||iterations<10000||iterations>2000000||!(envelope.kdfSalt instanceof Uint8Array)||envelope.kdfSalt.length!==16||!(envelope.wrappedContentKey instanceof Uint8Array)||envelope.wrappedContentKey.length!==60)throw Error('รูปแบบการป้องกันรหัสผ่านยังไม่รองรับ');
+ try{
+  const material=await crypto.subtle.importKey('raw',pass,'PBKDF2',false,['deriveKey']);
+  const wrapping=await crypto.subtle.deriveKey({name:'PBKDF2',hash:'SHA-256',salt:envelope.kdfSalt,iterations},material,{name:'AES-GCM',length:256},false,['decrypt']);
+  const wrapped=envelope.wrappedContentKey;
+  const key=new Uint8Array(await crypto.subtle.decrypt({name:'AES-GCM',iv:wrapped.slice(0,12),additionalData:new TextEncoder().encode(`3105PATCH/v${version}/key/${String(envelope.packageID).toUpperCase()}`)},wrapping,wrapped.slice(12)));
+  if(key.length!==32||!(envelope.keyFingerprint instanceof Uint8Array)||await studioDigest(key)!==[...envelope.keyFingerprint].map(v=>v.toString(16).padStart(2,'0')).join(''))throw Error('Invalid key');
+  return key;
+ }catch{throw Error('รหัสผ่านไม่ถูกต้องหรือไฟล์เสีย กรุณาตรวจรหัสผ่านแล้วลองใหม่');}
+ finally{pass.fill(0);}
+}
+export async function studioAnalyze(bytes,fileName='patch.3105',contentKey=null) {
+ if(bytes.length>5*1024*1024)throw Error('ไฟล์ต้องไม่เกิน 5 MB');
+ if(new TextDecoder().decode(bytes.slice(0,10))!=='3105PATCH\0')throw Error('ไฟล์นี้ไม่ใช่แพ็กเกจ 3105 ที่รองรับ');
+ const envelope=studioPlist(bytes.slice(10));
+ if(!Number.isInteger(envelope.schemaVersion)||envelope.schemaVersion<1||envelope.schemaVersion>9)throw Error('รูปแบบไฟล์รุ่นนี้ยังไม่รองรับ');
+ const rawKey=envelope.isPasswordProtected?contentKey:envelope.publicContentKey;
+ if(!(rawKey instanceof Uint8Array)||rawKey.length!==32||!(envelope.encryptedPayload instanceof Uint8Array))throw Error(envelope.isPasswordProtected?'ไฟล์มีรหัสผ่าน กรุณากรอกรหัสผ่านและตรวจใหม่':'ไม่มีข้อมูลถอดรหัสสาธารณะที่รองรับ');
+ if(envelope.keyFingerprint instanceof Uint8Array && await studioDigest(rawKey)!==[...envelope.keyFingerprint].map(v=>v.toString(16).padStart(2,'0')).join(''))throw Error('ข้อมูลเปิดไฟล์ไม่ถูกต้อง');
+ let plain;try{const key=await crypto.subtle.importKey('raw',rawKey,'AES-GCM',false,['decrypt']);const e=envelope.encryptedPayload;plain=new Uint8Array(await crypto.subtle.decrypt({name:'AES-GCM',iv:e.slice(0,12),additionalData:new TextEncoder().encode(`3105PATCH/v${envelope.schemaVersion}/payload/${String(envelope.packageID).toUpperCase()}`)},key,e.slice(12)));}catch{throw Error('รูปแบบการเข้ารหัสต่างจากที่รองรับ หรือไฟล์เสีย');}
  const payload=studioPlist(plain),rules=payload.project?.rules;
  if(!Array.isArray(rules))throw Error('ไม่พบรายการไฟล์แพตช์');
  let supported=false,labels=[],patches=[];
