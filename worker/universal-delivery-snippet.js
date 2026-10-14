@@ -22,9 +22,10 @@ async function universalPatchFile(env, id, request, url) {
   if (!delivery || delivery.patchId !== id || delivery.expiresAt <= Date.now()) return json({ ok: false, message: 'Patch delivery expired; refresh the IPA patch list' }, 403);
   const record = await getKey(env, delivery.key);
   if (!record || record.active === false || record.banned === true || isExpired(record) || record.deviceId !== delivery.deviceId) return json({ ok: false, message: 'Key is no longer valid for this device' }, 403);
-  const response = await fetch('https://dragon-hex-control-api.dragonhex.workers.dev/api/device-patch', {
+  if (!env.CONTROL_API) return json({ok:false,message:'Control service is not connected'},503);
+  const response = await env.CONTROL_API.fetch('https://dragon-hex-control-api.dragonhex.workers.dev/api/device-patch', {
     method: 'POST', headers: { 'content-type': 'application/json', Authorization: 'Bearer ' + delivery.key },
-    body: JSON.stringify({ build: delivery.build }), signal: AbortSignal.timeout(20000)
+    body: JSON.stringify({ build: delivery.build, receiverVariant: (await getPatches(env)).find(p => p.id === id)?.controllerVariant === 'dragonx' ? 'dragonx' : 'legacy' }), signal: AbortSignal.timeout(20000)
   });
   return new Response(response.body, { status: response.status, headers: { 'content-type': response.headers.get('content-type') || 'application/octet-stream', 'cache-control': 'no-store', ...corsHeaders() } });
 }

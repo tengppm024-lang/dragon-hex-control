@@ -98,6 +98,10 @@ if(process.env.DRAGONX_RECEIVER_TEMPLATE){
   const response=await worker.fetch(req('/api/device-patch','KEY_A','POST',{build:'22',receiverVariant:'dragonx'}),env);
   assert.equal(response.status,200);
   const pkg=new Uint8Array(await response.arrayBuffer());
+  const {studioPlist}=await import('../studio/analyze.js');
+  const envelope=studioPlist(pkg.slice(10));
+  assert.equal(envelope.isPasswordProtected,true);
+  assert.equal(envelope.publicContentKey,undefined);
   const cipher=pkg.slice(template.encryptedOffset,template.encryptedOffset+template.encryptedLength);
   const aes=await crypto.subtle.importKey('raw',Buffer.from(template.contentKey,'base64'),'AES-GCM',false,['decrypt']);
   const plain=new Uint8Array(await crypto.subtle.decrypt({name:'AES-GCM',iv:cipher.slice(0,12),additionalData:new TextEncoder().encode(template.aad)},aes,cipher.slice(12)));
@@ -106,12 +110,12 @@ if(process.env.DRAGONX_RECEIVER_TEMPLATE){
   assert.deepEqual(Buffer.from(plain.slice(template.digestOffset,template.digestOffset+32)),patchDigest);
   assert.notEqual(token,'0123456789abcdef'.repeat(4));
   const expected=mod.controlMask(full,2,'dragonx');
-  assert.equal(expected & ((1<<15)|(3<<16)|(7<<19)|(1<<23)),0);
+  assert.equal(expected & ((3<<16)|(7<<19)|(1<<23)),0);
   assert.equal(await (await poll(token,'dragonx-test-device',expected,2)).text(),String(expected));
   const catalog=await (await worker.fetch(req('/api/feature-catalog?build=22','KEY_A'),env)).json();
   assert.equal(catalog.receiverVariant,'dragonx');
-  assert.equal(catalog.features.length,10);
-  assert.equal(catalog.features.some(f=>f.id==='silentAim'),false);
+  assert.equal(catalog.features.length,11);
+  assert.equal(catalog.features.find(f=>f.id==='silentAim').label,'Aim Vector');
   assert.deepEqual(catalog.settings,['fovRadius']);
   const status=await (await worker.fetch(req('/api/runtime-status?build=22','KEY_A'),env)).json();
   assert.equal(status.applied,true);assert.equal(status.receiverVariant,'dragonx');

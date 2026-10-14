@@ -118,7 +118,7 @@ export function controlMask(input, version=1, variant='legacy') {
   const esp=['espMaster','distance','playerName','healthBar','topTracer','playerBox','fovCircle'].reduce((m,k,i)=>m|(c[k]?1<<i:0),0);
   const radius=Math.max(0,Math.min(31,Math.round((c.fovRadius-50)/11.29)));
   const result=aim|esp|(radius<<24)|(c.skeleton?1<<29:0);
-  return variant==='dragonx' ? result & 0x3f44007f : result;
+  return variant==='dragonx' ? result & 0x3f44807f : result;
 }
 const bearer = request => /^Bearer\s+(.+)$/i.exec(request.headers.get('Authorization') || '')?.[1]?.trim() || '';
 const bytes = value => Uint8Array.from(atob(value), c => c.charCodeAt(0));
@@ -174,7 +174,7 @@ export default {
       const auth = await authenticate(bearer(request), null, url.searchParams.get('build'));
       if (!auth.ok) return json(auth.body, auth.status, corsHeaders);
       const profile=await readState(env,`user:${await digest(auth.body.key || bearer(request))}`,'profile');
-      if(profile?.receiverVariant==='dragonx')return json({ok:true,receiverVariant:'dragonx',settings:['fovRadius'],features:[['espMaster','ESP'],['skeleton','Bone'],['distance','Distance'],['playerName','Name'],['healthBar','HP'],['topTracer','Line'],['playerBox','Box'],['aimSystem','Aimbot'],['noRecoil','Silent Aim / Scatter'],['fovCircle','FOV']].map(([id,label])=>({id,label,group:['aimSystem','noRecoil','fovCircle'].includes(id)?'AIM':'ESP'}))},200,corsHeaders);
+      if(profile?.receiverVariant==='dragonx')return json({ok:true,receiverVariant:'dragonx',settings:['fovRadius'],features:[['espMaster','ESP'],['skeleton','Bone'],['distance','Distance'],['playerName','Name'],['healthBar','HP'],['topTracer','Line'],['playerBox','Box'],['aimSystem','Aimbot'],['silentAim','Aim Vector'],['noRecoil','Silent Aim / Scatter'],['fovCircle','FOV']].map(([id,label])=>({id,label,group:['aimSystem','silentAim','noRecoil','fovCircle'].includes(id)?'AIM':'ESP'}))},200,corsHeaders);
       return proxy('/api/studio/catalog', request, corsHeaders);
     }
 
@@ -199,7 +199,7 @@ export default {
       const stub=env.DEVICE_STATE.get(env.DEVICE_STATE.idFromName(storageKey));
       const activation=await stub.fetch('https://state/activate',{method:'POST',body:JSON.stringify({tokenHash:await digest(token),receiverVariant})});
       if (!activation.ok) throw new Error('Receiver activation failed');
-      return new Response(pkg, { headers: { ...corsHeaders, 'content-type': 'application/octet-stream', 'content-disposition': 'attachment; filename="DRAGON_HEX_READBACK_FIX.3105"', 'cache-control': 'no-store' } });
+      return new Response(pkg, { headers: { ...corsHeaders, 'content-type': 'application/octet-stream', 'content-disposition': `attachment; filename="${receiverVariant==='dragonx'?'DRAGONx_WEB_RECEIVER':'DRAGON_HEX_READBACK_FIX'}.3105"`, 'cache-control': 'no-store' } });
     }
 
     if (['/api/runtime-config','/api/runtime-config-v2'].includes(url.pathname) && request.method === 'GET') {
