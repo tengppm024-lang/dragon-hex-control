@@ -1,6 +1,7 @@
 import {DRAGONX_CONTROLS,DRAGONX_IDS,normalizeDragonx,validDragonx,dragonxPacket,parseDragonxReadback} from './dragonx.js';
 const UPSTREAM = 'https://dhx.dragonhex.workers.dev';
 const WEB_ORIGIN = 'https://tengppm024-lang.github.io';
+const WEB_ORIGINS = new Set([WEB_ORIGIN, 'https://dragonhexplus.gt.tc']);
 
 // One Durable Object per paired device gives config and acknowledgements
 // consistent reads across the web browser and the phone's Worker location.
@@ -65,11 +66,11 @@ const json = (body, status = 200, extra = {}) => new Response(JSON.stringify(bod
 
 function cors(request) {
   const origin = request.headers.get('Origin');
-  const allowed = !origin || origin === WEB_ORIGIN;
+  const allowed = !origin || WEB_ORIGINS.has(origin);
   return {
     allowed,
     headers: {
-      'access-control-allow-origin': origin === WEB_ORIGIN ? WEB_ORIGIN : WEB_ORIGIN,
+      'access-control-allow-origin': origin && WEB_ORIGINS.has(origin) ? origin : WEB_ORIGIN,
       'access-control-allow-methods': 'GET, PUT, POST, OPTIONS',
       'access-control-allow-headers': 'content-type, authorization',
       'access-control-max-age': '86400',
