@@ -61,14 +61,15 @@ function renderNativeCatalog(catalog) {
   state.nativeElements.clear();
   document.querySelectorAll('#esp-section,#aim-section,#tuning-section').forEach(section=>{section.hidden=true;});
   const nav=document.createElement('nav');nav.className='native-nav';nav.setAttribute('aria-label','หมวดฟังก์ชั่น');
-  for(const group of ['ESP','AIM','MISC','COLORS','ONLINE','SETTINGS']){const link=document.createElement('a');link.href='#native-'+group.toLowerCase();link.textContent=group;nav.append(link);}root.append(nav);
-  for(const group of ['ESP','AIM','MISC','COLORS','ONLINE','SETTINGS']){
+  const groups=['ESP','AIM','MISC','COLORS','ONLINE','SETTINGS'].filter(group=>group==='ONLINE'||catalog.features.some(f=>f.group===group && !['menuLanguage','englishLabels'].includes(f.id)));
+  for(const group of groups){const link=document.createElement('a');link.href='#native-'+group.toLowerCase();link.textContent=group;nav.append(link);}root.append(nav);
+  for(const group of groups){
     const section=document.createElement('section');section.className='control-section';section.id='native-'+group.toLowerCase();
     const title=document.createElement('div');title.className='section-title';const heading=document.createElement('h2');heading.textContent=group;title.append(heading);section.append(title);
     if(group==='ONLINE'){const info=document.createElement('p');info.id='native-online-state';info.className='muted';info.textContent='สถานะการเชื่อมต่อจะอัปเดตจากเกม';section.append(info);root.append(section);continue;}
     const cards=document.createElement('div');cards.className='native-grid native-grid--toggles';
     const settings=document.createElement('div');settings.className='native-grid native-grid--settings';
-    for(const field of catalog.features.filter(f=>f.group===group)){
+    for(const field of catalog.features.filter(f=>f.group===group && !['menuLanguage','englishLabels'].includes(f.id))){
       const card=document.createElement('label');card.className='native-card '+(field.kind==='boolean'?'native-switch-card':'native-setting-card');
       const name=document.createElement('strong');name.textContent=field.label;card.append(name);
       let input;
@@ -82,7 +83,7 @@ function renderNativeCatalog(catalog) {
     }
     if(cards.childElementCount)section.append(cards);if(settings.childElementCount)section.append(settings);root.append(section);
   }
-  document.querySelectorAll('a[href="#esp-section"],a[href="#aim-section"],a[href="#tuning-section"]').forEach(link=>{link.dataset.originalHref=link.getAttribute('href');link.href=link.dataset.originalHref==='#esp-section'?'#native-esp':link.dataset.originalHref==='#aim-section'?'#native-aim':'#native-settings';});
+  document.querySelectorAll('a[href="#esp-section"],a[href="#aim-section"],a[href="#tuning-section"]').forEach(link=>{link.dataset.originalHref=link.getAttribute('href');link.href=link.dataset.originalHref==='#esp-section'?'#native-esp':link.dataset.originalHref==='#aim-section'?'#native-aim':groups.includes('SETTINGS')?'#native-settings':'#native-aim';});
   $('imported-catalog').hidden=true;$('imported-catalog').textContent='';
   $('control-warning').hidden=true;
   $('control-warning').textContent='';
