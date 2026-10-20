@@ -27,11 +27,13 @@ export const FFPROXY_CONTROLS = [
   ...[['skinLook','Character Look'],['skinTitle','Title'],['skinEmote','Emote'],['skinWeapon','Weapon Skin'],['skinFinalShot','Final Shot']].map(([id,label])=>boolean(id,label,'SKINS')),
   ...[['lookId','Character ID'],['titleId','Title ID'],['emoteId','Emote ID'],['weaponId','Weapon Skin ID'],['finalShotId','Final Shot ID']].map(([id,label])=>integer(id,label,'SKINS',0,2147483647,0))
 ];
+export const FFPROXY_V2_CONTROLS = [...FFPROXY_CONTROLS.filter(f=>!['highJump','flyAura'].includes(f.id)),boolean('aimWeaponStats','Aim Weapon Stats','AIM')];
+export const ffproxyControls = revision => revision===2?FFPROXY_V2_CONTROLS:FFPROXY_CONTROLS;
 const validValue = (f,v) => f.disabled?v===f.default:f.kind==='boolean'?typeof v==='boolean':f.kind==='color'?typeof v==='string'&&/^#[a-f0-9]{6}$/i.test(v):f.kind==='text'?typeof v==='string'&&v.length<=f.maxLength&&!/["\\\r\n\[\]]/.test(v):Number.isInteger(v)&&v>=f.min&&v<=f.max&&(f.kind!=='select'||f.options.some(o=>o.value===v));
-export const normalizeFfproxy = (input={}) => Object.fromEntries(FFPROXY_CONTROLS.map(f=>[f.id,validValue(f,input[f.id])?input[f.id]:f.default]));
-export const validFfproxy = input => !!input&&typeof input==='object'&&!Array.isArray(input)&&FFPROXY_CONTROLS.every(f=>validValue(f,input[f.id]));
-export function ffproxyPacket(input) {
-  const c=normalizeFfproxy(input);
+export const normalizeFfproxy = (input={},revision=1) => Object.fromEntries(ffproxyControls(revision).map(f=>[f.id,validValue(f,input[f.id])?input[f.id]:f.default]));
+export const validFfproxy = (input,revision=1) => !!input&&typeof input==='object'&&!Array.isArray(input)&&ffproxyControls(revision).every(f=>validValue(f,input[f.id]));
+export function ffproxyPacket(input,revision=1) {
+  const c=normalizeFfproxy(input,revision);
   let state=0,aux=0;
   const stateBits={espBox:1,espLine:2,espHealth:3,espName:4,espDistance:5,showFov:6,espCount:7,aimLine:8,spinBot:9,fastSwitch:12,aimKill:14,aimSilent:15,espAlert:19,espRadar:20,checkHacker:27,noSpread:18,hideDamage:31};
   for(const [id,bit] of Object.entries(stateBits))if(c[id])state|=1<<bit;
@@ -59,5 +61,8 @@ export function ffproxyPacket(input) {
   if(c.aimBot&&c.aimPriority===1)aux|=1<<24;
   const flags=['skinLook','skinTitle','skinEmote','skinWeapon','skinFinalShot'].reduce((mask,id,i)=>mask|(c[id]?1<<i:0),0);
   // Its parser uses Int32.TryParse, so high-bit masks must be signed.
-  return {licensed:true,state:state|0,aux:aux|0,headRate:c.headRate,fovRadius:c.fovRadius,aimbotFovRadius:c.aimbotFovRadius,aimDistance:c.aimDistance,aimChest:c.aimTarget===2,bombEsp:c.bombEsp,skillCdEsp:c.skillCdEsp,highJump:c.highJump,autoSwap:c.autoSwap,flyAura:c.flyAura,fastFireLevel:c.fastFire?c.fastFireLevel:0,fastReloadPercent:0,speedScale:c.speedHack?c.speedScale:100,spoofName:c.spoofName,spoofText:c.spoofName?c.spoofText:'',espCustomColor:c.espCustomColor,hackerCount:0,hackers:'',flags,lookId:c.lookId,titleId:c.titleId,emoteId:c.emoteId,weaponId:c.weaponId,finalShotId:c.finalShotId};
+  const packet={licensed:true,state:state|0,aux:aux|0,headRate:c.headRate,fovRadius:c.fovRadius,aimbotFovRadius:c.aimbotFovRadius,aimDistance:c.aimDistance,aimChest:c.aimTarget===2,bombEsp:c.bombEsp,skillCdEsp:c.skillCdEsp,highJump:c.highJump,autoSwap:c.autoSwap,flyAura:c.flyAura,fastFireLevel:c.fastFire?c.fastFireLevel:0,fastReloadPercent:0,speedScale:c.speedHack?c.speedScale:100,spoofName:c.spoofName,spoofText:c.spoofName?c.spoofText:'',espCustomColor:c.espCustomColor,hackerCount:0,hackers:'',flags,lookId:c.lookId,titleId:c.titleId,emoteId:c.emoteId,weaponId:c.weaponId,finalShotId:c.finalShotId};
+  if(revision===2){delete packet.highJump;delete packet.flyAura;packet.aimWeaponStats=c.aimWeaponStats;}
+  return packet;
 }
+

@@ -16,15 +16,16 @@ export async function ffproxyNativeRoute(request,env,{authenticate,digest,json})
     const auth=await authenticate(key,null,'22');
     if(!auth.ok)return denied(auth.body.message||'Invalid key');
     const canonicalKey=auth.body.key||key;
+    const receiverRevision=(request.headers.get('User-Agent')||'').includes('DHX-V2')?2:1;
     const storageKey=`user:${await digest(canonicalKey)}`;
     const token=Array.from(crypto.getRandomValues(new Uint8Array(24)),b=>b.toString(16).padStart(2,'0')).join('');
     const tokenHash=await digest(token);
     const stub=env.DEVICE_STATE.get(env.DEVICE_STATE.idFromName(storageKey));
-    const activation=await stub.fetch('https://state/ffproxy-activate',{method:'POST',body:JSON.stringify({tokenHash,deviceHash})});
+    const activation=await stub.fetch('https://state/ffproxy-activate',{method:'POST',body:JSON.stringify({tokenHash,deviceHash,receiverRevision})});
     if(!activation.ok)return denied(await activation.text());
     const keyExpiry=auth.body.expiresAt?Date.parse(auth.body.expiresAt):null;
     const expiresAt=Math.min(keyExpiry||Infinity,Date.now()+86400000);
-    await env.DEVICE_CONFIG.put(`ffproxy:session:${tokenHash}`,JSON.stringify({key:canonicalKey,deviceHash,storageKey,expiresAt}),{expirationTtl:Math.max(60,Math.ceil((expiresAt-Date.now())/1000))});
+    await env.DEVICE_CONFIG.put(`ffproxy:session:${tokenHash}`,JSON.stringify({key:canonicalKey,deviceHash,storageKey,expiresAt,receiverRevision}),{expirationTtl:Math.max(60,Math.ceil((expiresAt-Date.now())/1000))});
     return json({ok:true,licensed:true,menuSecret:tokenHash.slice(0,32),sessionToken:token,expiresAt:auth.body.expiresAt||'Unlimited'},200);
   }
   const token=request.headers.get('X-FF-Session')||'';
@@ -38,5 +39,6 @@ export async function ffproxyNativeRoute(request,env,{authenticate,digest,json})
   const stub=env.DEVICE_STATE.get(env.DEVICE_STATE.idFromName(storageKey));
   const runtime=await stub.fetch('https://state/runtime',{method:'POST',body:JSON.stringify({tokenHash,deviceHash,protocolVersion:4,receiverVariant:'ffproxy',appliedMask:null,appliedValues:null,readback:false,hookFlags:null})});
   if(!runtime.ok)return denied(await runtime.text());
-  return json(ffproxyPacket(await runtime.json()),200);
+  return json(ffproxyPacket(await runtime.json(),receiver.receiverRevision||1),200);
 }
+

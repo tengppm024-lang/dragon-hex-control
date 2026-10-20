@@ -47,6 +47,20 @@ const catalog=await (await web('/api/feature-catalog?build=22','KEY_A_VALID')).j
 assert.equal(catalog.receiverVariant,'ffproxy');assert.equal(catalog.features.length,FFPROXY_CONTROLS.length);
 const status=await (await web('/api/runtime-status?build=22','KEY_A_VALID')).json();
 assert.equal(status.online,true);assert.equal(status.deliveryOnly,true);assert.equal(status.applied,false);assert.equal(status.upgradeRequired,false);
+// V2 authenticates on the same key/device but exposes only its own controls.
+const v2=await (await call('/api/ff-menu/verify',{'X-FF-Key':'KEY_A_VALID','X-FF-HWID':'phone-111111','User-Agent':'UnityPlayer/2018.4.12f1 DHX-V2'})).json();
+assert.equal(v2.ok,true);
+assert.equal((await poll(renewed.sessionToken,'phone-111111')).licensed,false);
+const v2catalog=await (await web('/api/feature-catalog?build=22','KEY_A_VALID')).json();
+assert.equal(v2catalog.features.length,56);
+assert.ok(v2catalog.features.some(f=>f.id==='aimWeaponStats'));
+assert.ok(!v2catalog.features.some(f=>['highJump','flyAura'].includes(f.id)));
+const v2config=(await (await web('/api/device-config?build=22','KEY_A_VALID')).json()).config;
+assert.equal(v2config.speedScale,125);v2config.aimWeaponStats=true;
+assert.equal((await web('/api/device-config','KEY_A_VALID','PUT',{build:'22',config:v2config})).status,200);
+const v2packet=await poll(v2.sessionToken,'phone-111111');
+assert.equal(v2packet.aimWeaponStats,true);assert.equal(v2packet.highJump,undefined);assert.equal(v2packet.flyAura,undefined);
+assert.equal((await poll(b.sessionToken,'phone-222222')).aimWeaponStats,undefined);
 blocked.add('KEY_A_VALID');
 assert.equal((await poll(renewed.sessionToken,'phone-111111')).licensed,false);
 assert.equal((await poll(b.sessionToken,'phone-222222')).licensed,true);
@@ -54,3 +68,4 @@ assert.equal((await web('/api/device-config?build=22','KEY_A_VALID')).status,401
 assert.equal((await call('/api/runtime-config-v3',{'Authorization':'Bearer '+renewed.sessionToken})).status,401);
 for(const value of Object.values(ffproxyPacket({...normalizeFfproxy(),hideDamage:true,aimKill:true,aimKillDamage:3,espColor:true,espThickness:7})))if(typeof value==='number')assert.ok(Number.isInteger(value)&&value>=-2147483648&&value<=2147483647);
 console.log(`PASS: ${FFPROXY_CONTROLS.length} typed controls; signed native masks; DHX authentication; isolated keys; one game device per key; token renewal/revocation; revoked key rejected; truthful delivery status; native/web config round trip`);
+
