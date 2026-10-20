@@ -28,7 +28,7 @@ jobs:
       - name: Prepare public website
         run: |
           mkdir -p public-site
-          cp index.html app.js config.js style.css public-site/
+          cp index.html app.js config.js style.css dragon-hex-plus-logo.png public-site/
       - uses: actions/upload-pages-artifact@v3
         with:
           path: public-site
