@@ -12,6 +12,7 @@ const state = {
   config: defaultConfig(),
   catalogIds: null,
   nativeCatalog: null,
+  nativeVariant: null,
   nativeReady: false,
   presetScope: '',
   refreshing: false,
@@ -38,7 +39,7 @@ function setApiStatus(mode, text) {
 
 function setControlsEnabled(enabled) {
   document.querySelectorAll('.feature-toggle, .segmented button, #fov-radius').forEach(control => { control.disabled = !enabled || Boolean(control.dataset?.feature && state.catalogIds && !state.catalogIds.has(control.dataset.feature)); });
-  state.nativeElements.forEach(({input})=>{input.disabled=!enabled || !state.nativeReady;});
+  state.nativeElements.forEach(({input,field})=>{input.disabled=!enabled || !state.nativeReady || field.disabled===true;});
   $('save').disabled = !enabled;
   $('reset-all').disabled = !enabled;
 }
@@ -56,12 +57,12 @@ function renderConfig() {
 function renderNativeCatalog(catalog) {
   const root=$('native-controls');root.replaceChildren();root.hidden=false;
   document.querySelectorAll('.side-nav').forEach(nav=>{nav.hidden=true;});
-  state.nativeCatalog=catalog.features;state.nativeReady=catalog.ready===true;
+  state.nativeCatalog=catalog.features;state.nativeVariant=catalog.receiverVariant;state.nativeReady=catalog.ready===true;
   state.controlSupported=state.controlSupported && state.nativeReady;
   state.nativeElements.clear();
   document.querySelectorAll('#esp-section,#aim-section,#tuning-section').forEach(section=>{section.hidden=true;});
   const nav=document.createElement('nav');nav.className='native-nav';nav.setAttribute('aria-label','หมวดฟังก์ชั่น');
-  const groups=['ESP','AIM','MISC','COLORS','ONLINE','SETTINGS'].filter(group=>group==='ONLINE'||catalog.features.some(f=>f.group===group && !['menuLanguage','englishLabels'].includes(f.id)));
+  const groups=['ESP','AIM','MISC','COLORS','SKINS','ONLINE','SETTINGS'].filter(group=>group==='ONLINE'||catalog.features.some(f=>f.group===group && !['menuLanguage','englishLabels'].includes(f.id)));
   for(const group of groups){const link=document.createElement('a');link.href='#native-'+group.toLowerCase();link.textContent=group;nav.append(link);}root.append(nav);
   for(const group of groups){
     const section=document.createElement('section');section.className='control-section';section.id='native-'+group.toLowerCase();
@@ -71,14 +72,14 @@ function renderNativeCatalog(catalog) {
     const settings=document.createElement('div');settings.className='native-grid native-grid--settings';
     for(const field of catalog.features.filter(f=>f.group===group && !['menuLanguage','englishLabels'].includes(f.id))){
       const card=document.createElement('label');card.className='native-card '+(field.kind==='boolean'?'native-switch-card':'native-setting-card');
-      const name=document.createElement('strong');name.textContent=field.label;card.append(name);
+      const name=document.createElement('strong');name.textContent=field.label;card.append(name);if(field.note){const note=document.createElement('small');note.textContent=field.note;card.append(note);}
       let input;
       if(field.kind==='select'){
         input=document.createElement('select');for(const option of field.options){const o=document.createElement('option');o.value=String(option.value);o.textContent=option.label;input.append(o);}
-      }else{input=document.createElement('input');input.type=field.kind==='boolean'?'checkbox':field.id==='fovRadius'?'range':'number';if(field.kind==='integer'){input.min=String(field.min);input.max=String(field.max);input.step='1';input.required=true;}}
+      }else{input=document.createElement('input');input.type=field.kind==='boolean'?'checkbox':field.kind==='text'?'text':field.kind==='color'?'color':field.id==='fovRadius'?'range':'number';if(field.kind==='integer'){input.min=String(field.min);input.max=String(field.max);input.step=String(field.step||1);input.required=true;}if(field.kind==='text')input.maxLength=field.maxLength;}
       input.setAttribute('aria-label',field.label);input.dataset.nativeSetting=field.id;
-      const existing=state.config[field.id];state.config[field.id]=field.kind==='boolean'?(typeof existing==='boolean'?existing:field.default):Number.isInteger(existing)?Math.max(field.min,Math.min(field.max,existing)):field.default;
-      input.onchange=()=>{if(field.kind==='boolean')state.config[field.id]=input.checked;else if(input.validity.valid)state.config[field.id]=Number(input.value);$('save-status').textContent='UNSAVED CHANGES';};
+      const existing=state.config[field.id];state.config[field.id]=field.kind==='boolean'?(typeof existing==='boolean'?existing:field.default):['text','color'].includes(field.kind)?(typeof existing==='string'?existing:field.default):Number.isInteger(existing)?Math.max(field.min,Math.min(field.max,existing)):field.default;
+      input.onchange=()=>{if(field.kind==='boolean')state.config[field.id]=input.checked;else if(input.validity.valid)state.config[field.id]=['text','color'].includes(field.kind)?input.value:Number(input.value);$('save-status').textContent='UNSAVED CHANGES';};
       card.append(input);if(field.kind==='boolean'){const track=document.createElement('span');track.className='native-switch';track.setAttribute('aria-hidden','true');card.append(track);const note=document.createElement('small');note.className='native-switch-state';note.setAttribute('aria-hidden','true');card.append(note);}if(field.id==='fovRadius'){card.classList.add('native-fov-card');const value=document.createElement('output');value.id='native-fov-value';value.textContent=state.config[field.id]+' px';card.append(value);input.oninput=()=>{state.config[field.id]=Number(input.value);value.textContent=input.value+' px';$('save-status').textContent='ยังไม่ได้บันทึก';};}if(field.kind==='integer'){const bounds=document.createElement('small');bounds.textContent=field.min+' – '+field.max;card.append(bounds);}(field.kind==='boolean'?cards:settings).append(card);state.nativeElements.set(field.id,{input,field});
     }
     if(cards.childElementCount)section.append(cards);if(settings.childElementCount)section.append(settings);root.append(section);
@@ -141,7 +142,7 @@ async function loadDashboard() {
   try {
     const catalog = await request(`/api/feature-catalog?build=${encodeURIComponent(BUILD)}`, { headers: { Authorization: `Bearer ${sessionKey}` } });
     if (state.key === sessionKey && Array.isArray(catalog.features) && catalog.features.length) {
-      if(catalog.receiverVariant==='dragonx' && catalog.features.every(f=>f.kind)){renderNativeCatalog(catalog);setControlsEnabled(state.controlSupported && !status?.maintenance);await refreshRuntime();return;}
+      if(['dragonx','ffproxy'].includes(catalog.receiverVariant) && catalog.features.every(f=>f.kind)){renderNativeCatalog(catalog);setControlsEnabled(state.controlSupported && !status?.maintenance);await refreshRuntime();return;}
       const known = defaultConfig();
       const imported = catalog.features.filter(f => typeof known[f.id] === 'boolean');
       if (imported.length) {
@@ -175,7 +176,9 @@ async function refreshRuntime() {
   try {
     const data = await request(`/api/runtime-status?deviceId=${encodeURIComponent(state.deviceId)}&build=${encodeURIComponent(BUILD)}`, { headers: { Authorization: `Bearer ${state.key}` } });
     if(state.key!==sessionKey)return;
-    if(state.nativeCatalog && !state.nativeReady){if(data.receiverVersion===3){await loadDashboard();return;}$('runtime-state').textContent='กรุณาเปิดแอปเพื่อเชื่อมต่ออุปกรณ์';$('sync-label').textContent='รอเชื่อมต่ออุปกรณ์';if($('native-online-state'))$('native-online-state').textContent=$('runtime-state').textContent;return;}
+    if(state.nativeCatalog&&data.receiverVersion>=3&&data.receiverVariant!==state.nativeVariant){await loadDashboard();return;}
+    if(state.nativeCatalog && !state.nativeReady){if([3,4].includes(data.receiverVersion)){await loadDashboard();return;}$('runtime-state').textContent='กรุณาเปิดแอปเพื่อเชื่อมต่ออุปกรณ์';$('sync-label').textContent='รอเชื่อมต่ออุปกรณ์';if($('native-online-state'))$('native-online-state').textContent=$('runtime-state').textContent;return;}
+    if(data.deliveryOnly){$('runtime-state').textContent=data.online?'อุปกรณ์เชื่อมต่อและกำลังรับการตั้งค่า':'ยังไม่มีการตอบกลับจากอุปกรณ์';$('sync-label').textContent=data.online?'CONNECTED':'WAITING FOR GAME';if($('native-online-state'))$('native-online-state').textContent=$('runtime-state').textContent;return;}
     if(data.upgradeRequired){$('runtime-state').textContent='กรุณาเชื่อมต่ออุปกรณ์ก่อนใช้งาน';$('sync-label').textContent='รอเชื่อมต่ออุปกรณ์';return;}
     $('runtime-state').textContent = data.online ? (data.applied ? 'เกมรับและใช้ค่าล่าสุดแล้ว' : 'เกมเชื่อมต่อแล้ว กำลังรอใช้ค่าล่าสุด') : 'ยังไม่มีการตอบกลับจากเกม';
     $('sync-label').textContent = data.online ? (data.applied ? 'GAME STATE CONFIRMED' : 'STATE NOT MATCHED') : 'WAITING FOR GAME';
@@ -205,7 +208,7 @@ setInterval(updateExpiry,1000);
 function endSession(message='') {
   state.key='';state.expiresAt=null;state.controlSupported=false;state.catalogIds=null;
   state.presetScope='';$('preset-name').value='';$('preset-feedback').textContent='';renderPresetList();
-  state.nativeCatalog=null;state.nativeReady=false;state.nativeElements.clear();$('native-controls').replaceChildren();$('native-controls').hidden=true;
+  state.nativeCatalog=null;state.nativeVariant=null;state.nativeReady=false;state.nativeElements.clear();$('native-controls').replaceChildren();$('native-controls').hidden=true;
   document.querySelectorAll('.side-nav').forEach(nav=>{nav.hidden=false;});
   document.querySelectorAll('a[data-original-href]').forEach(link=>{link.href=link.dataset.originalHref;});
   document.querySelectorAll('#esp-section,#aim-section,#tuning-section').forEach(section=>{section.hidden=false;});
@@ -275,7 +278,7 @@ document.querySelectorAll('[data-headshot]').forEach(button => {
 async function persistConfig(reset = false) {
   if (!state.key || !state.controlSupported || $('save').disabled || !$('maintenance').hidden) return;
   if(!reset && [...state.nativeElements.values()].some(({input})=>input.validity && !input.validity.valid)){$('save-status').textContent='กรุณาตรวจค่าที่อยู่นอกช่วง';return;}
-  if(!reset)state.nativeElements.forEach(({input,field})=>{state.config[field.id]=field.kind==='boolean'?input.checked:Number(input.value);});
+  if(!reset)state.nativeElements.forEach(({input,field})=>{state.config[field.id]=field.kind==='boolean'?input.checked:['text','color'].includes(field.kind)?input.value:Number(input.value);});
   if (reset) { state.config = state.nativeCatalog?Object.fromEntries(state.nativeCatalog.map(f=>[f.id,f.default])):defaultConfig(); renderConfig(); }
   const sessionKey=state.key;
   const button = $('save');
@@ -307,7 +310,7 @@ $('reset-all').onclick = () => persistConfig(true);
 
 function collectCurrentConfig(){
   if([...state.nativeElements.values()].some(({input})=>input.validity&&!input.validity.valid))throw new Error('กรุณาตรวจค่าที่อยู่นอกช่วง');
-  state.nativeElements.forEach(({input,field})=>{state.config[field.id]=field.kind==='boolean'?input.checked:Number(input.value);});
+  state.nativeElements.forEach(({input,field})=>{state.config[field.id]=field.kind==='boolean'?input.checked:['text','color'].includes(field.kind)?input.value:Number(input.value);});
   return JSON.parse(JSON.stringify(state.config));
 }
 function readPresets(){try{const value=JSON.parse(localStorage.getItem('dragonhex.presets.'+state.presetScope)||'[]');return Array.isArray(value)?value.filter(x=>x&&typeof x.id==='string'&&typeof x.name==='string'&&x.config&&typeof x.config==='object').slice(0,10):[];}catch{return [];}}
@@ -320,14 +323,14 @@ function renderPresetList(){
 }
 function storePreset(name){
   if(!state.presetScope)return;
-  try{const item={id:crypto.randomUUID(),name:name.slice(0,60),savedAt:Date.now(),config:collectCurrentConfig(),native:Boolean(state.nativeCatalog)};const list=[item,...readPresets()].slice(0,10);localStorage.setItem('dragonhex.presets.'+state.presetScope,JSON.stringify(list));renderPresetList();$('preset-list').value=item.id;$('preset-feedback').textContent='เก็บชุดการตั้งค่าแล้ว';}
+  try{const item={id:crypto.randomUUID(),name:name.slice(0,60),savedAt:Date.now(),config:collectCurrentConfig(),native:Boolean(state.nativeCatalog),variant:state.nativeVariant};const list=[item,...readPresets()].slice(0,10);localStorage.setItem('dragonhex.presets.'+state.presetScope,JSON.stringify(list));renderPresetList();$('preset-list').value=item.id;$('preset-feedback').textContent='เก็บชุดการตั้งค่าแล้ว';}
   catch{$('preset-feedback').textContent='เก็บชุดการตั้งค่าไม่ได้ กรุณาตรวจค่าหรือพื้นที่เบราว์เซอร์';}
 }
 $('save-preset').onclick=()=>{if(!state.key)return;const name=$('preset-name').value.trim()||'ชุดการตั้งค่า '+new Date().toLocaleString('th-TH');storePreset(name);};
 $('restore-preset').onclick=()=>{
   if(!state.key)return;const item=readPresets().find(x=>x.id===$('preset-list').value);if(!item){$('preset-feedback').textContent='กรุณาเลือกชุดการตั้งค่า';return;}
-  if(item.native!==Boolean(state.nativeCatalog)){$('preset-feedback').textContent='ชุดนี้ไม่ตรงกับเมนูปัจจุบัน';return;}
-  const next=state.nativeCatalog?Object.fromEntries(state.nativeCatalog.map(f=>[f.id,f.kind==='boolean'?(typeof item.config[f.id]==='boolean'?item.config[f.id]:f.default):(Number.isInteger(item.config[f.id])?Math.max(f.min,Math.min(f.max,item.config[f.id])):f.default)])):{...defaultConfig(),...item.config};
+  if(item.native!==Boolean(state.nativeCatalog)||(item.native&&(item.variant||'dragonx')!==state.nativeVariant)){$('preset-feedback').textContent='ชุดนี้ไม่ตรงกับเมนูปัจจุบัน';return;}
+  const next=state.nativeCatalog?Object.fromEntries(state.nativeCatalog.map(f=>[f.id,f.kind==='boolean'?(typeof item.config[f.id]==='boolean'?item.config[f.id]:f.default):['text','color'].includes(f.kind)?(typeof item.config[f.id]==='string'?item.config[f.id]:f.default):(Number.isInteger(item.config[f.id])?Math.max(f.min,Math.min(f.max,item.config[f.id])):f.default)])):{...defaultConfig(),...item.config};
   state.config=next;renderConfig();$('save-status').textContent='เรียกคืนแล้ว · ยังไม่ได้ส่ง';$('preset-feedback').textContent='เรียกคืนแล้ว กดบันทึกและส่งเพื่อใช้งาน';
 };
 $('refresh-status').onclick=async()=>{

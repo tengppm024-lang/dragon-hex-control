@@ -1,4 +1,6 @@
 import {DRAGONX_CONTROLS,DRAGONX_IDS,normalizeDragonx,validDragonx,dragonxPacket,parseDragonxReadback} from './dragonx.js';
+import {FFPROXY_CONTROLS,normalizeFfproxy,validFfproxy} from './ffproxy.js';
+import {ffproxyNativeRoute} from './ffproxy-runtime.js';
 const UPSTREAM = 'https://dhx.dragonhex.workers.dev';
 const WEB_ORIGIN = 'https://tengppm024-lang.github.io';
 const WEB_ORIGINS = new Set([WEB_ORIGIN, 'https://dragonhexplus.gt.tc']);
@@ -9,6 +11,20 @@ export class DeviceState {
   constructor(state) { this.storage = state.storage; }
   async fetch(request) {
     const field = new URL(request.url).pathname.slice(1);
+    if (field === 'ffproxy-activate' && request.method === 'POST') {
+      const {tokenHash,deviceHash}=await request.json();
+      if(!/^[a-f0-9]{64}$/.test(tokenHash||'')||!/^[a-f0-9]{64}$/.test(deviceHash||''))return new Response('Invalid device claim',{status:400});
+      return this.storage.transaction(async tx=>{
+        const previous=await tx.get('receiver');
+        if(previous?.deviceHash&&previous.deviceHash!==deviceHash)return new Response('Key already connected to another game device',{status:409});
+        const profile=await tx.get('profile');
+        if(profile?.receiverVariant!=='ffproxy')await tx.put('config',normalizeFfproxy());
+        await tx.put('receiver',{tokenHash,deviceHash});
+        await tx.put('profile',{receiverVariant:'ffproxy',protocolVersion:4});
+        await tx.delete('seen');
+        return new Response(null,{status:204});
+      });
+    }
     if (field === 'activate' && request.method === 'POST') {
       const {tokenHash,receiverVariant='legacy',protocolVersion=2} = await request.json();
       await this.storage.transaction(async tx => {
@@ -25,8 +41,8 @@ export class DeviceState {
         if (!owner || owner.tokenHash !== data.tokenHash) return new Response('Receiver replaced', {status:409});
         if (owner.deviceHash && owner.deviceHash !== data.deviceHash) return new Response('Key already connected to another game device', {status:409});
         if (!owner.deviceHash) await tx.put('receiver', {...owner,deviceHash:data.deviceHash});
-        if (data.appliedMask !== null || data.appliedValues) await tx.put('seen', {seenAt:new Date().toISOString(),appliedMask:data.appliedMask,appliedValues:data.appliedValues || null,protocolVersion:data.protocolVersion || 1,receiverVariant:data.receiverVariant || 'legacy',readback:data.readback===true,hookFlags:data.hookFlags ?? null});
-        return new Response(JSON.stringify(await tx.get('config') || (data.protocolVersion===3?normalizeDragonx():defaults())), {headers:{'content-type':'application/json'}});
+        if (data.protocolVersion===4 || data.appliedMask !== null || data.appliedValues) await tx.put('seen', {seenAt:new Date().toISOString(),appliedMask:data.appliedMask,appliedValues:data.appliedValues || null,protocolVersion:data.protocolVersion || 1,receiverVariant:data.receiverVariant || 'legacy',readback:data.readback===true,hookFlags:data.hookFlags ?? null});
+        return new Response(JSON.stringify(await tx.get('config') || (data.protocolVersion===4?normalizeFfproxy():data.protocolVersion===3?normalizeDragonx():defaults())), {headers:{'content-type':'application/json'}});
       });
     }
     if (!['config', 'seen', 'profile'].includes(field)) return new Response('Not found', {status:404});
@@ -165,6 +181,11 @@ export default {
     if (request.method === 'OPTIONS') return new Response(null, { status: allowed ? 204 : 403, headers: corsHeaders });
     if (!allowed) return json({ ok: false, message: 'Origin not allowed' }, 403, corsHeaders);
 
+    if(['/api/ff-menu/verify','/api/ff-menu/state'].includes(url.pathname)){
+      const native=await ffproxyNativeRoute(request,env,{authenticate,digest,json});
+      return new Response(native.body,{status:native.status,headers:{...Object.fromEntries(native.headers),...corsHeaders}});
+    }
+
     if (url.pathname === '/') return json({ ok: true, name: 'DRAGON HEX Control API', version: '3.0' }, 200, corsHeaders);
     if (url.pathname === '/keys') return Response.redirect(`${UPSTREAM}/keys`, 302);
     if (url.pathname === '/api/auth' && request.method === 'POST') {
@@ -177,6 +198,7 @@ export default {
       const auth = await authenticate(bearer(request), null, url.searchParams.get('build'));
       if (!auth.ok) return json(auth.body, auth.status, corsHeaders);
       const profile=await readState(env,`user:${await digest(auth.body.key || bearer(request))}`,'profile');
+      if(profile?.receiverVariant==='ffproxy'&&profile.protocolVersion===4)return json({ok:true,receiverVariant:'ffproxy',protocolVersion:4,ready:true,features:FFPROXY_CONTROLS},200,corsHeaders);
       return json({ok:true,receiverVariant:'dragonx',protocolVersion:3,ready:profile?.receiverVariant==='dragonx'&&profile?.protocolVersion===3,features:DRAGONX_CONTROLS.map(({slot,...f})=>f)},200,corsHeaders);
     }
 
@@ -239,6 +261,11 @@ export default {
       if (!auth.ok) return json(auth.body, auth.status, corsHeaders);
       const storageKey = `user:${await digest(auth.body.key || key)}`;
       const seen = await readState(env, storageKey, 'seen');
+      const profile=await readState(env,storageKey,'profile');
+      if(profile?.receiverVariant==='ffproxy'&&profile.protocolVersion===4){
+        const online=seen?.receiverVariant==='ffproxy'&&Date.now()-Date.parse(seen.seenAt)<30000;
+        return json({ok:true,online,seenAt:seen?.seenAt||null,receiverVariant:'ffproxy',receiverVersion:4,upgradeRequired:false,readback:false,deliveryOnly:true,applied:false},200,corsHeaders);
+      }
       const config = await readState(env, storageKey, 'config') || (seen?.protocolVersion===3?normalizeDragonx():defaults());
       const online = !!seen && Date.now() - Date.parse(seen.seenAt) < 30000;
       return json({ ok: true, online, seenAt: seen?.seenAt || null, receiverVariant:seen?.receiverVariant || 'legacy',receiverVersion:seen?.protocolVersion || 1, upgradeRequired:online && !seen.readback, readback:seen?.readback===true,hookFlags:seen?.hookFlags ?? null, applied: online && seen?.readback===true && (seen.protocolVersion===3?seen.appliedValues===dragonxPacket(config):seen.appliedMask === controlMask(config,seen.protocolVersion || 1,seen.receiverVariant)) }, 200, corsHeaders);
@@ -253,7 +280,7 @@ export default {
       const storageKey = `user:${await digest(auth.body.key || key)}`;
       const stored = await readState(env, storageKey, 'config');
       const profile=await readState(env,storageKey,'profile');
-      return json({ ok: true, config: profile?.protocolVersion===3?normalizeDragonx(stored || {}):normalize(stored || {}) }, 200, corsHeaders);
+      return json({ ok: true, config: profile?.protocolVersion===4?normalizeFfproxy(stored||{}):profile?.protocolVersion===3?normalizeDragonx(stored || {}):normalize(stored || {}) }, 200, corsHeaders);
     }
 
     if (url.pathname === '/api/device-config' && request.method === 'PUT') {
@@ -265,8 +292,8 @@ export default {
       if (!auth.ok) return json(auth.body, auth.status || 401, corsHeaders);
       const storageKey = `user:${await digest(auth.body.key || key)}`;
       const profile=await readState(env,storageKey,'profile');
-      if (!(profile?.protocolVersion===3?validDragonx(data.config):validConfig(data.config))) return json({ ok: false, message: 'Invalid feature configuration' }, 400, corsHeaders);
-      const config=profile?.protocolVersion===3?normalizeDragonx(data.config):normalize(Object.fromEntries([...FEATURES,'target','headshot','aimSystemTarget','fovRadius'].filter(k=>data.config[k]!==undefined).map(k=>[k,data.config[k]])));
+      if (!(profile?.protocolVersion===4?validFfproxy(data.config):profile?.protocolVersion===3?validDragonx(data.config):validConfig(data.config))) return json({ ok: false, message: 'Invalid feature configuration' }, 400, corsHeaders);
+      const config=profile?.protocolVersion===4?normalizeFfproxy(data.config):profile?.protocolVersion===3?normalizeDragonx(data.config):normalize(Object.fromEntries([...FEATURES,'target','headshot','aimSystemTarget','fovRadius'].filter(k=>data.config[k]!==undefined).map(k=>[k,data.config[k]])));
       config.updatedAt=new Date().toISOString();
       await writeState(env, storageKey, 'config', config);
       return json({ ok: true, config }, 200, corsHeaders);
@@ -274,6 +301,7 @@ export default {
 
     return json({ ok: false, message: 'Not found' }, 404, corsHeaders);
     } catch {
+      if(['/api/ff-menu/verify','/api/ff-menu/state'].includes(new URL(request.url).pathname))return json({ok:false,licensed:false,message:'Control service unavailable'},200,cors(request).headers);
       return json({ ok: false, message: 'API temporarily unavailable' }, 502, cors(request).headers);
     }
   }
