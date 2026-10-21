@@ -200,7 +200,8 @@ export default {
       if (!auth.ok) return json(auth.body, auth.status, corsHeaders);
       const profile=await readState(env,`user:${await digest(auth.body.key || bearer(request))}`,'profile');
       if(profile?.receiverVariant==='ffproxy'&&profile.protocolVersion===4)return json({ok:true,receiverVariant:'ffproxy',protocolVersion:4,ready:true,features:ffproxyControls(profile.receiverRevision||1)},200,corsHeaders);
-      return json({ok:true,receiverVariant:'dragonx',protocolVersion:3,ready:profile?.receiverVariant==='dragonx'&&profile?.protocolVersion===3,features:DRAGONX_CONTROLS.map(({slot,...f})=>f)},200,corsHeaders);
+      if(profile?.receiverVariant==='dragonx'&&profile.protocolVersion===3)return json({ok:true,receiverVariant:'dragonx',protocolVersion:3,ready:true,features:DRAGONX_CONTROLS.map(({slot,...f})=>f)},200,corsHeaders);
+      return json({ok:true,receiverVariant:'ffproxy',protocolVersion:4,receiverRevision:3,ready:false,features:ffproxyControls(3)},200,corsHeaders);
     }
 
     if (['/api/device-patch', '/api/runtime-config', '/api/runtime-config-v2','/api/runtime-config-v3', '/api/runtime-status'].includes(url.pathname) && !env.DEVICE_CONFIG) return json({ ok: false, message: 'DEVICE_CONFIG KV binding is not configured' }, 503, corsHeaders);
