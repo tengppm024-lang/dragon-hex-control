@@ -61,6 +61,16 @@ assert.equal((await web('/api/device-config','KEY_A_VALID','PUT',{build:'22',con
 const v2packet=await poll(v2.sessionToken,'phone-111111');
 assert.equal(v2packet.aimWeaponStats,true);assert.equal(v2packet.highJump,undefined);assert.equal(v2packet.flyAura,undefined);
 assert.equal((await poll(b.sessionToken,'phone-222222')).aimWeaponStats,undefined);
+const videos=await (await call('/api/ff-menu/verify',{'X-FF-Key':'KEY_A_VALID','X-FF-HWID':'phone-111111','User-Agent':'UnityPlayer/2018.4.12f1 DHX-V2 DHX-VIDEOS'})).json();
+assert.equal(videos.ok,true);assert.equal((await poll(v2.sessionToken,'phone-111111')).licensed,false);
+const videosCatalog=await (await web('/api/feature-catalog?build=22','KEY_A_VALID')).json();
+assert.equal(videosCatalog.features.length,59);
+const videosConfig=(await (await web('/api/device-config?build=22','KEY_A_VALID')).json()).config;
+assert.equal(videosConfig.aimWeaponStats,true);videosConfig.hitFly=true;videosConfig.noClip=true;videosConfig.grenadeThrowScale=250;
+assert.equal((await web('/api/device-config','KEY_A_VALID','PUT',{build:'22',config:videosConfig})).status,200);
+const videosPacket=await poll(videos.sessionToken,'phone-111111');assert.equal(videosPacket.hitFly,true);assert.equal(videosPacket.noClip,true);assert.equal(videosPacket.grenadeThrowScale,250);
+assert.equal((await poll(b.sessionToken,'phone-222222')).hitFly,undefined);
+assert.equal((await web('/api/device-config','KEY_A_VALID','PUT',{build:'22',config:{...videosConfig,grenadeThrowScale:301}})).status,400);
 blocked.add('KEY_A_VALID');
 assert.equal((await poll(renewed.sessionToken,'phone-111111')).licensed,false);
 assert.equal((await poll(b.sessionToken,'phone-222222')).licensed,true);

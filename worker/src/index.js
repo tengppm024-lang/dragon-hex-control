@@ -13,7 +13,7 @@ export class DeviceState {
     const field = new URL(request.url).pathname.slice(1);
     if (field === 'ffproxy-activate' && request.method === 'POST') {
       const {tokenHash,deviceHash,receiverRevision=1}=await request.json();
-      if(![1,2].includes(receiverRevision))return new Response('Invalid receiver revision',{status:400});
+      if(![1,2,3].includes(receiverRevision))return new Response('Invalid receiver revision',{status:400});
       if(!/^[a-f0-9]{64}$/.test(tokenHash||'')||!/^[a-f0-9]{64}$/.test(deviceHash||''))return new Response('Invalid device claim',{status:400});
       return this.storage.transaction(async tx=>{
         const previous=await tx.get('receiver');

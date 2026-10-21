@@ -16,7 +16,8 @@ export async function ffproxyNativeRoute(request,env,{authenticate,digest,json})
     const auth=await authenticate(key,null,'22');
     if(!auth.ok)return denied(auth.body.message||'Invalid key');
     const canonicalKey=auth.body.key||key;
-    const receiverRevision=(request.headers.get('User-Agent')||'').includes('DHX-V2')?2:1;
+    const agent=request.headers.get('User-Agent')||'';
+    const receiverRevision=agent.includes('DHX-VIDEOS')?3:agent.includes('DHX-V2')?2:1;
     const storageKey=`user:${await digest(canonicalKey)}`;
     const token=Array.from(crypto.getRandomValues(new Uint8Array(24)),b=>b.toString(16).padStart(2,'0')).join('');
     const tokenHash=await digest(token);
