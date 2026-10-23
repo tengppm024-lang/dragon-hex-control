@@ -1,6 +1,6 @@
 import {DRAGONX_CONTROLS,DRAGONX_IDS,normalizeDragonx,validDragonx,dragonxPacket,parseDragonxReadback} from './dragonx.js';
 import {FFPROXY_CONTROLS,ffproxyControls,normalizeFfproxy,validFfproxy} from './ffproxy.js';
-import {ffproxyNativeRoute} from './ffproxy-runtime.js';
+import {ffproxyNativeRoute,authenticateControlCode} from './ffproxy-runtime.js';
 const UPSTREAM = 'https://dhx.dragonhex.workers.dev';
 const WEB_ORIGIN = 'https://tengppm024-lang.github.io';
 const WEB_ORIGINS = new Set([WEB_ORIGIN, 'https://dragonhexplus.gt.tc']);
@@ -11,6 +11,19 @@ export class DeviceState {
   constructor(state) { this.storage = state.storage; }
   async fetch(request) {
     const field = new URL(request.url).pathname.slice(1);
+    if (['ffproxy-session','ffproxy-logout'].includes(field) && request.method==='POST') {
+      const data=await request.json();
+      return this.storage.transaction(async tx=>{
+        const owner=await tx.get('receiver');
+        if(!owner||owner.tokenHash!==data.tokenHash||owner.deviceHash!==data.deviceHash)return new Response('Session replaced',{status:401});
+        if(field==='ffproxy-logout'){
+          await tx.delete('receiver');await tx.delete('seen');
+          const profile=await tx.get('profile');
+          await tx.put('config',normalizeFfproxy({},profile?.receiverRevision||1));
+        }
+        return new Response(null,{status:204});
+      });
+    }
     if (field === 'ffproxy-activate' && request.method === 'POST') {
       const {tokenHash,deviceHash,receiverRevision=1}=await request.json();
       if(![1,2,3].includes(receiverRevision))return new Response('Invalid receiver revision',{status:400});
@@ -182,21 +195,26 @@ export default {
     if (request.method === 'OPTIONS') return new Response(null, { status: allowed ? 204 : 403, headers: corsHeaders });
     if (!allowed) return json({ ok: false, message: 'Origin not allowed' }, 403, corsHeaders);
 
-    if(['/api/ff-menu/verify','/api/ff-menu/state'].includes(url.pathname)){
+    if(['/api/ff-menu/verify','/api/ff-menu/state','/api/ff-menu/logout'].includes(url.pathname)){
       const native=await ffproxyNativeRoute(request,env,{authenticate,digest,json});
       return new Response(native.body,{status:native.status,headers:{...Object.fromEntries(native.headers),...corsHeaders}});
     }
+
+    const authenticateWeb=(credential,device,build)=>/^[a-f0-9]{32}$/i.test(credential||'')
+      ?authenticateControlCode(credential,build,env,{authenticate,digest})
+      :authenticate(credential,device,build);
 
     if (url.pathname === '/') return json({ ok: true, name: 'DRAGON HEX Control API', version: '3.0' }, 200, corsHeaders);
     if (url.pathname === '/keys') return Response.redirect(`${UPSTREAM}/keys`, 302);
     if (url.pathname === '/api/auth' && request.method === 'POST') {
       const data=await request.json().catch(()=>null);
-      const auth=await authenticate(data?.key?.trim(), null, data?.build);
-      return json(auth.body,auth.status,corsHeaders);
+      const auth=await authenticateWeb(data?.key?.trim(), null, data?.build);
+      const {key:privateKey,...publicBody}=auth.body;
+      return json(publicBody,auth.status,corsHeaders);
     }
     if (url.pathname === '/api/status' && request.method === 'GET') return proxy('/api/status', request, corsHeaders);
     if (url.pathname === '/api/feature-catalog' && request.method === 'GET') {
-      const auth = await authenticate(bearer(request), null, url.searchParams.get('build'));
+      const auth = await authenticateWeb(bearer(request), null, url.searchParams.get('build'));
       if (!auth.ok) return json(auth.body, auth.status, corsHeaders);
       const profile=await readState(env,`user:${await digest(auth.body.key || bearer(request))}`,'profile');
       if(profile?.receiverVariant==='ffproxy'&&profile.protocolVersion===4)return json({ok:true,receiverVariant:'ffproxy',protocolVersion:4,ready:true,features:ffproxyControls(profile.receiverRevision||1)},200,corsHeaders);
@@ -259,7 +277,7 @@ export default {
     if (url.pathname === '/api/runtime-status' && request.method === 'GET') {
       const key = bearer(request);
       const deviceId = url.searchParams.get('deviceId') || '';
-      const auth = await authenticate(key, deviceId, url.searchParams.get('build') || '');
+      const auth = await authenticateWeb(key, deviceId, url.searchParams.get('build') || '');
       if (!auth.ok) return json(auth.body, auth.status, corsHeaders);
       const storageKey = `user:${await digest(auth.body.key || key)}`;
       const seen = await readState(env, storageKey, 'seen');
@@ -277,7 +295,7 @@ export default {
     if (url.pathname === '/api/device-config' && request.method === 'GET') {
       const key = request.headers.get('Authorization')?.replace(/^Bearer\s+/i, '').trim() || '';
       const deviceId = url.searchParams.get('deviceId')?.trim() || '';
-      const auth = await authenticate(key, deviceId, url.searchParams.get('build') || '');
+      const auth = await authenticateWeb(key, deviceId, url.searchParams.get('build') || '');
       if (!auth.ok) return json(auth.body, auth.status || 401, corsHeaders);
       const storageKey = `user:${await digest(auth.body.key || key)}`;
       const stored = await readState(env, storageKey, 'config');
@@ -290,7 +308,7 @@ export default {
       if (!data) return json({ ok: false, message: 'Invalid JSON' }, 400, corsHeaders);
       const key = request.headers.get('Authorization')?.replace(/^Bearer\s+/i, '').trim() || '';
       const deviceId = String(data.deviceId || '').trim();
-      const auth = await authenticate(key, deviceId, data.build);
+      const auth = await authenticateWeb(key, deviceId, data.build);
       if (!auth.ok) return json(auth.body, auth.status || 401, corsHeaders);
       const storageKey = `user:${await digest(auth.body.key || key)}`;
       const profile=await readState(env,storageKey,'profile');

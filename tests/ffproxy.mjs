@@ -75,6 +75,20 @@ assert.equal((await web('/api/device-config','KEY_A_VALID','PUT',{build:'22',con
 const videosPacket=await poll(videos.sessionToken,'phone-111111');assert.equal(videosPacket.hitFly,true);assert.equal(videosPacket.noClip,true);assert.equal(videosPacket.grenadeThrowScale,250);
 assert.equal((await poll(b.sessionToken,'phone-222222')).hitFly,undefined);
 assert.equal((await web('/api/device-config','KEY_A_VALID','PUT',{build:'22',config:{...videosConfig,grenadeThrowScale:301}})).status,400);
+// Web aliases preserve canonical per-key config and are revoked on renewal/logout.
+const codeAuth=await call('/api/auth',{},'POST',{key:videos.menuSecret,build:'22'});
+assert.equal(codeAuth.status,200);const codeBody=await codeAuth.json();assert.equal(codeBody.valid,true);assert.equal(codeBody.key,undefined);
+assert.equal((await web('/api/device-config?build=22',v2.menuSecret)).status,401);
+assert.equal((await (await web('/api/device-config?build=22',videos.menuSecret)).json()).config.grenadeThrowScale,250);
+assert.equal((await (await web('/api/device-config?build=22',b.menuSecret)).json()).config.grenadeThrowScale,undefined);
+assert.equal((await web('/api/device-config?build=22','f'.repeat(32))).status,401);
+const logout=await call('/api/ff-menu/logout',{'X-FF-Session':videos.sessionToken,'X-FF-HWID':'phone-222222'});
+assert.equal((await logout.json()).ok,false);
+assert.equal((await web('/api/device-config?build=22',videos.menuSecret)).status,200);
+assert.equal((await (await call('/api/ff-menu/logout',{'X-FF-Session':videos.sessionToken,'X-FF-HWID':'phone-111111'})).json()).ok,true);
+assert.equal((await web('/api/device-config?build=22',videos.menuSecret)).status,401);
+assert.equal((await poll(videos.sessionToken,'phone-111111')).licensed,false);
+assert.equal((await web('/api/device-config?build=22',b.menuSecret)).status,200);
 blocked.add('KEY_A_VALID');
 assert.equal((await poll(renewed.sessionToken,'phone-111111')).licensed,false);
 assert.equal((await poll(b.sessionToken,'phone-222222')).licensed,true);

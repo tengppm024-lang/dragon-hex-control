@@ -4,7 +4,7 @@ import {ffproxyPacket} from './ffproxy.js';
 // A denied native session must explicitly send licensed:false to close its gate.
 export async function ffproxyNativeRoute(request,env,{authenticate,digest,json}) {
   const url=new URL(request.url);
-  if(!['/api/ff-menu/verify','/api/ff-menu/state'].includes(url.pathname))return null;
+  if(!['/api/ff-menu/verify','/api/ff-menu/state','/api/ff-menu/logout'].includes(url.pathname))return null;
   const denied=message=>json({ok:false,licensed:false,message},200);
   if(request.method!=='GET')return denied('Unsupported method');
   if(!env.DEVICE_CONFIG||!env.DEVICE_STATE)return denied('Control storage unavailable');
@@ -27,6 +27,7 @@ export async function ffproxyNativeRoute(request,env,{authenticate,digest,json})
     const keyExpiry=auth.body.expiresAt?Date.parse(auth.body.expiresAt):null;
     const expiresAt=Math.min(keyExpiry||Infinity,Date.now()+86400000);
     await env.DEVICE_CONFIG.put(`ffproxy:session:${tokenHash}`,JSON.stringify({key:canonicalKey,deviceHash,storageKey,expiresAt,receiverRevision}),{expirationTtl:Math.max(60,Math.ceil((expiresAt-Date.now())/1000))});
+    await env.DEVICE_CONFIG.put(`ffproxy:control:${tokenHash.slice(0,32)}`,JSON.stringify({tokenHash}),{expirationTtl:Math.max(60,Math.ceil((expiresAt-Date.now())/1000))});
     return json({ok:true,licensed:true,menuSecret:tokenHash.slice(0,32),sessionToken:token,expiresAt:auth.body.expiresAt||'Unlimited'},200);
   }
   const token=request.headers.get('X-FF-Session')||'';
@@ -34,6 +35,11 @@ export async function ffproxyNativeRoute(request,env,{authenticate,digest,json})
   const tokenHash=await digest(token);
   const receiver=await env.DEVICE_CONFIG.get(`ffproxy:session:${tokenHash}`,'json');
   if(!receiver||receiver.expiresAt<=Date.now()||receiver.deviceHash!==deviceHash)return denied('Session expired or device mismatch');
+  if(url.pathname.endsWith('/logout')){
+    const stub=env.DEVICE_STATE.get(env.DEVICE_STATE.idFromName(receiver.storageKey));
+    const response=await stub.fetch('https://state/ffproxy-logout',{method:'POST',body:JSON.stringify({tokenHash,deviceHash})});
+    return response.ok?json({ok:true,licensed:false,message:'Signed out'},200):denied('Session already replaced');
+  }
   const auth=await authenticate(receiver.key,null,'22');
   if(!auth.ok)return denied(auth.body.message||'Key expired');
   const storageKey=`user:${await digest(auth.body.key||receiver.key)}`;
@@ -41,5 +47,23 @@ export async function ffproxyNativeRoute(request,env,{authenticate,digest,json})
   const runtime=await stub.fetch('https://state/runtime',{method:'POST',body:JSON.stringify({tokenHash,deviceHash,protocolVersion:4,receiverVariant:'ffproxy',appliedMask:null,appliedValues:null,readback:false,hookFlags:null})});
   if(!runtime.ok)return denied(await runtime.text());
   return json(ffproxyPacket(await runtime.json(),receiver.receiverRevision||1),200);
+}
+
+// Control codes are aliases for an active native session, never license keys.
+export async function authenticateControlCode(code,build,env,{authenticate,digest}) {
+  const denied=()=>({ok:false,status:401,body:{valid:false,message:'Control code expired. Sign in to the app again.'}});
+  if(!/^[a-f0-9]{32}$/i.test(code||''))return denied();
+  if(!env.DEVICE_CONFIG||!env.DEVICE_STATE)return denied();
+  const alias=await env.DEVICE_CONFIG.get(`ffproxy:control:${code.toLowerCase()}`,'json');
+  if(!alias)return denied();
+  const session=await env.DEVICE_CONFIG.get(`ffproxy:session:${alias.tokenHash}`,'json');
+  if(!session||session.expiresAt<=Date.now())return denied();
+  const stub=env.DEVICE_STATE.get(env.DEVICE_STATE.idFromName(session.storageKey));
+  const owner=await stub.fetch('https://state/ffproxy-session',{method:'POST',body:JSON.stringify({tokenHash:alias.tokenHash,deviceHash:session.deviceHash})});
+  if(!owner.ok)return denied();
+  const auth=await authenticate(session.key,null,build);
+  if(!auth.ok)return auth;
+  if(`user:${await digest(auth.body.key||session.key)}`!==session.storageKey)return denied();
+  return {...auth,body:{...auth.body,key:auth.body.key||session.key}};
 }
 
