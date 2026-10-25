@@ -3,9 +3,23 @@ import worker,{DeviceState} from '../worker/src/index.js';
 import {FFPROXY_CONTROLS,normalizeFfproxy,validFfproxy,ffproxyPacket} from '../worker/src/ffproxy.js';
 
 const values=new Map(),objects=new Map(),blocked=new Set();
+const freshKeys=new Map();let activationCalls=0;
 globalThis.fetch=async(url,options)=>{
+  const {key,build,deviceId}=JSON.parse(options.body);assert.equal(build,'22');
+  if(url==='https://dhx.dragonhex.workers.dev/api/auth'){
+    activationCalls++;assert.match(deviceId,/^phone-/);
+    if(key==='KEY_NEW_DENIED')return new Response(JSON.stringify({valid:false,message:'Activation denied'}),{status:403});
+    assert.equal(key,'KEY_NEW_VALID');assert.equal(freshKeys.has(key),false);
+    freshKeys.set(key,new Date(Date.now()+3600000).toISOString());
+    return new Response(JSON.stringify({valid:true,key,expiresAt:freshKeys.get(key)}));
+  }
   assert.equal(url,'https://dhx.dragonhex.workers.dev/api/control-auth');
-  const {key,build}=JSON.parse(options.body);assert.equal(build,'22');
+  if(['KEY_NEW_VALID','KEY_NEW_DENIED'].includes(key)){
+    const expiry=freshKeys.get(key);
+    if(!expiry)return new Response(JSON.stringify({valid:false,message:'กรุณาเข้าสู่ระบบ IPA ด้วยคีย์นี้ก่อน'}),{status:403});
+    if(Date.parse(expiry)<=Date.now())return new Response(JSON.stringify({valid:false,message:'Key expired'}),{status:403});
+    return new Response(JSON.stringify({valid:true,key,expiresAt:expiry}));
+  }
   return new Response(JSON.stringify(key&&['KEY_A_VALID','KEY_B_VALID'].includes(key)&&!blocked.has(key)?{ok:true,valid:true,key,expiresAt:new Date(Date.now()+3600000).toISOString()}:{ok:false,valid:false,message:'Invalid or expired key'}),{status:key&&!blocked.has(key)&&['KEY_A_VALID','KEY_B_VALID'].includes(key)?200:401});
 };
 const env={DEVICE_CONFIG:{async get(k){return values.has(k)?JSON.parse(values.get(k)):null;},async put(k,v){values.set(k,v);}},DEVICE_STATE:{idFromName:k=>k,get(k){
@@ -96,4 +110,22 @@ assert.equal((await web('/api/device-config?build=22','KEY_A_VALID')).status,401
 assert.equal((await call('/api/runtime-config-v3',{'Authorization':'Bearer '+renewed.sessionToken})).status,401);
 for(const value of Object.values(ffproxyPacket({...normalizeFfproxy(),hideDamage:true,aimKill:true,aimKillDamage:3,espColor:true,espThickness:7})))if(typeof value==='number')assert.ok(Number.isInteger(value)&&value>=-2147483648&&value<=2147483647);
 console.log(`PASS: ${FFPROXY_CONTROLS.length} typed controls; signed native masks; DHX authentication; isolated keys; one game device per key; token renewal/revocation; revoked key rejected; truthful delivery status; native/web config round trip`);
+
+// A fresh key may start its existing DHX duration from the in-game login.
+const beforeActivation=activationCalls;
+assert.equal((await call('/api/auth',{},'POST',{key:'KEY_NEW_VALID',build:'22'})).status,403);
+assert.equal(activationCalls,beforeActivation); // website cannot activate native keys
+const fresh=await verify('KEY_NEW_VALID','phone-fresh111');assert.equal(fresh.ok,true);
+assert.equal(activationCalls,beforeActivation+1);assert.match(fresh.menuSecret,/^[a-f0-9]{32}$/);
+const repeat=await verify('KEY_NEW_VALID','phone-fresh111');assert.equal(repeat.expiresAt,fresh.expiresAt);
+assert.equal(activationCalls,beforeActivation+1);
+assert.equal((await call('/api/auth',{},'POST',{key:repeat.menuSecret,build:'22'})).status,200);
+assert.equal((await verify('KEY_NEW_VALID','phone-other111')).licensed,false);
+freshKeys.set('KEY_NEW_VALID',new Date(Date.now()-1000).toISOString());
+assert.equal((await verify('KEY_NEW_VALID','phone-fresh111')).licensed,false);
+assert.equal((await poll(repeat.sessionToken,'phone-fresh111')).licensed,false);
+assert.equal(activationCalls,beforeActivation+1); // expired keys never reactivate
+assert.equal((await verify('KEY_NEW_DENIED','phone-denied111')).licensed,false);
+assert.equal(activationCalls,beforeActivation+2);
+console.log('PASS: first in-game login activates fresh DHX key; stable expiry on repeat; website cannot activate keys; device isolation, expiry and activation denials preserved');
 

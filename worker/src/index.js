@@ -131,6 +131,19 @@ async function authenticate(key, deviceId, build = '') {
   return { ok, status: ok ? response.status : (response.ok ? 401 : response.status), body };
 }
 
+// Use the existing DHX activation policy only after its read-only check says
+// the key has never been activated. Repeated game logins cannot extend expiry.
+async function activateGameKey(key,deviceId,build) {
+  const response=await fetch(`${UPSTREAM}/api/auth`,{
+    method:'POST',headers:{'content-type':'application/json',accept:'application/json'},
+    body:JSON.stringify({key,deviceId,build}),signal:AbortSignal.timeout(10000)
+  });
+  const body=await response.json().catch(()=>({valid:false,message:'Invalid activation response'}));
+  if(!response.ok||body.valid!==true||body.banned===true)return {ok:false,status:response.ok?401:response.status,body};
+  // Re-read through the regular policy rather than trusting a local timer.
+  return authenticate(key,null,build);
+}
+
 const FEATURES = ['aimSystem','silentAim','noRecoil','espMaster','skeleton','distance','playerName','healthBar','topTracer','playerBox','fovCircle'];
 function validConfig(input) {
   return input && typeof input.aimSystem === 'boolean' && typeof input.noRecoil === 'boolean' &&
@@ -196,7 +209,7 @@ export default {
     if (!allowed) return json({ ok: false, message: 'Origin not allowed' }, 403, corsHeaders);
 
     if(['/api/ff-menu/verify','/api/ff-menu/state','/api/ff-menu/logout'].includes(url.pathname)){
-      const native=await ffproxyNativeRoute(request,env,{authenticate,digest,json});
+      const native=await ffproxyNativeRoute(request,env,{authenticate,activateGameKey,digest,json});
       return new Response(native.body,{status:native.status,headers:{...Object.fromEntries(native.headers),...corsHeaders}});
     }
 

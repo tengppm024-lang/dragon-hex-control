@@ -2,7 +2,7 @@ import {ffproxyPacket} from './ffproxy.js';
 
 // Native WWW clients inspect JSON fields rather than HTTP error bodies.
 // A denied native session must explicitly send licensed:false to close its gate.
-export async function ffproxyNativeRoute(request,env,{authenticate,digest,json}) {
+export async function ffproxyNativeRoute(request,env,{authenticate,activateGameKey,digest,json}) {
   const url=new URL(request.url);
   if(!['/api/ff-menu/verify','/api/ff-menu/state','/api/ff-menu/logout'].includes(url.pathname))return null;
   const denied=message=>json({ok:false,licensed:false,message},200);
@@ -13,7 +13,10 @@ export async function ffproxyNativeRoute(request,env,{authenticate,digest,json})
   const deviceHash=await digest(hwid);
   if(url.pathname.endsWith('/verify')){
     const key=(request.headers.get('X-FF-Key')||'').trim();
-    const auth=await authenticate(key,null,'22');
+    let auth=await authenticate(key,null,'22');
+    if(!auth.ok&&auth.status===403&&auth.body.message==='กรุณาเข้าสู่ระบบ IPA ด้วยคีย์นี้ก่อน'&&activateGameKey){
+      auth=await activateGameKey(key,hwid,'22');
+    }
     if(!auth.ok)return denied(auth.body.message||'Invalid key');
     const canonicalKey=auth.body.key||key;
     const agent=request.headers.get('User-Agent')||'';
