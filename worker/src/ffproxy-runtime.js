@@ -2,7 +2,7 @@ import {ffproxyPacket} from './ffproxy.js';
 
 // Native WWW clients inspect JSON fields rather than HTTP error bodies.
 // A denied native session must explicitly send licensed:false to close its gate.
-export async function ffproxyNativeRoute(request,env,{authenticate,activateGameKey,digest,json}) {
+export async function ffproxyNativeRoute(request,env,{authenticate,activateGameKey,digest,json,licenseProvider='dhx'}) {
   const url=new URL(request.url);
   if(!['/api/ff-menu/verify','/api/ff-menu/state','/api/ff-menu/logout'].includes(url.pathname))return null;
   const denied=message=>json({ok:false,licensed:false,message},200);
@@ -13,7 +13,7 @@ export async function ffproxyNativeRoute(request,env,{authenticate,activateGameK
   const deviceHash=await digest(hwid);
   if(url.pathname.endsWith('/verify')){
     const key=(request.headers.get('X-FF-Key')||'').trim();
-    let auth=await authenticate(key,null,'22');
+    let auth=await authenticate(key,hwid,'22');
     if(!auth.ok&&auth.status===403&&auth.body.message==='กรุณาเข้าสู่ระบบ IPA ด้วยคีย์นี้ก่อน'&&activateGameKey){
       auth=await activateGameKey(key,hwid,'22');
     }
@@ -21,7 +21,7 @@ export async function ffproxyNativeRoute(request,env,{authenticate,activateGameK
     const canonicalKey=auth.body.key||key;
     const agent=request.headers.get('User-Agent')||'';
     const receiverRevision=agent.includes('DHX-VIDEOS')?3:agent.includes('DHX-V2')?2:1;
-    const storageKey=`user:${await digest(canonicalKey)}`;
+    const storageKey=auth.scope||`user:${await digest(canonicalKey)}`;
     const token=Array.from(crypto.getRandomValues(new Uint8Array(24)),b=>b.toString(16).padStart(2,'0')).join('');
     const tokenHash=await digest(token);
     const stub=env.DEVICE_STATE.get(env.DEVICE_STATE.idFromName(storageKey));
@@ -29,7 +29,7 @@ export async function ffproxyNativeRoute(request,env,{authenticate,activateGameK
     if(!activation.ok)return denied(await activation.text());
     const keyExpiry=auth.body.expiresAt?Date.parse(auth.body.expiresAt):null;
     const expiresAt=Math.min(keyExpiry||Infinity,Date.now()+86400000);
-    await env.DEVICE_CONFIG.put(`ffproxy:session:${tokenHash}`,JSON.stringify({key:canonicalKey,deviceHash,storageKey,expiresAt,receiverRevision}),{expirationTtl:Math.max(60,Math.ceil((expiresAt-Date.now())/1000))});
+    await env.DEVICE_CONFIG.put(`ffproxy:session:${tokenHash}`,JSON.stringify({key:canonicalKey,deviceHash,storageKey,expiresAt,receiverRevision,licenseProvider,...(licenseProvider==='vps'?{deviceId:hwid}:{})}),{expirationTtl:Math.max(60,Math.ceil((expiresAt-Date.now())/1000))});
     await env.DEVICE_CONFIG.put(`ffproxy:control:${tokenHash.slice(0,32)}`,JSON.stringify({tokenHash}),{expirationTtl:Math.max(60,Math.ceil((expiresAt-Date.now())/1000))});
     return json({ok:true,licensed:true,menuSecret:tokenHash.slice(0,32),sessionToken:token,expiresAt:auth.body.expiresAt||'Unlimited'},200);
   }
@@ -43,9 +43,9 @@ export async function ffproxyNativeRoute(request,env,{authenticate,activateGameK
     const response=await stub.fetch('https://state/ffproxy-logout',{method:'POST',body:JSON.stringify({tokenHash,deviceHash})});
     return response.ok?json({ok:true,licensed:false,message:'Signed out'},200):denied('Session already replaced');
   }
-  const auth=await authenticate(receiver.key,null,'22');
+  const auth=await authenticate(receiver.key,receiver.deviceId||hwid,'22');
   if(!auth.ok)return denied(auth.body.message||'Key expired');
-  const storageKey=`user:${await digest(auth.body.key||receiver.key)}`;
+  const storageKey=auth.scope||`user:${await digest(auth.body.key||receiver.key)}`;
   const stub=env.DEVICE_STATE.get(env.DEVICE_STATE.idFromName(storageKey));
   const runtime=await stub.fetch('https://state/runtime',{method:'POST',body:JSON.stringify({tokenHash,deviceHash,protocolVersion:4,receiverVariant:'ffproxy',appliedMask:null,appliedValues:null,readback:false,hookFlags:null})});
   if(!runtime.ok)return denied(await runtime.text());
@@ -64,9 +64,9 @@ export async function authenticateControlCode(code,build,env,{authenticate,diges
   const stub=env.DEVICE_STATE.get(env.DEVICE_STATE.idFromName(session.storageKey));
   const owner=await stub.fetch('https://state/ffproxy-session',{method:'POST',body:JSON.stringify({tokenHash:alias.tokenHash,deviceHash:session.deviceHash})});
   if(!owner.ok)return denied();
-  const auth=await authenticate(session.key,null,build);
+  const auth=await authenticate(session.key,session.deviceId||null,build);
   if(!auth.ok)return auth;
-  if(`user:${await digest(auth.body.key||session.key)}`!==session.storageKey)return denied();
+  if((auth.scope||`user:${await digest(auth.body.key||session.key)}`)!==session.storageKey)return denied();
   return {...auth,body:{...auth.body,key:auth.body.key||session.key}};
 }
 

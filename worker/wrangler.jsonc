@@ -2,6 +2,7 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "dragon-hex-control-api",
   "main": "src/index.js",
+  "vars": {"LICENSE_ORIGIN":"https://tonexcheat.duckdns.org"},
   "compatibility_date": "2026-10-12",
   "compatibility_flags": ["global_fetch_strictly_public"],
   "durable_objects": { "bindings": [{ "name": "DEVICE_STATE", "class_name": "DeviceState" }] },
@@ -13,4 +14,5 @@
     }
   ]
 }
+
 

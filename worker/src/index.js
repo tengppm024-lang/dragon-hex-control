@@ -1,3 +1,4 @@
+import {authenticateVps,VPS_LICENSE_ORIGIN} from './license-vps.js';
 import {DRAGONX_CONTROLS,DRAGONX_IDS,normalizeDragonx,validDragonx,dragonxPacket,parseDragonxReadback} from './dragonx.js';
 import {FFPROXY_CONTROLS,ffproxyControls,normalizeFfproxy,validFfproxy} from './ffproxy.js';
 import {ffproxyNativeRoute,authenticateControlCode} from './ffproxy-runtime.js';
@@ -204,32 +205,35 @@ export default {
   async fetch(request, env) {
     try {
     const url = new URL(request.url);
+    const vpsLicensing=env.LICENSE_ORIGIN===VPS_LICENSE_ORIGIN;
+    const licenseAuth=vpsLicensing?((key,device,build)=>authenticateVps(key,device,build,{digest})):authenticate;
     const { allowed, headers: corsHeaders } = cors(request);
     if (request.method === 'OPTIONS') return new Response(null, { status: allowed ? 204 : 403, headers: corsHeaders });
     if (!allowed) return json({ ok: false, message: 'Origin not allowed' }, 403, corsHeaders);
+    if(vpsLicensing&&["/api/device-patch","/api/runtime-config","/api/runtime-config-v2","/api/runtime-config-v3"].includes(url.pathname))return json({ok:false,licensed:false,message:"Use the current universal receiver and sign in with a VPS key"},410,corsHeaders);
 
     if(['/api/ff-menu/verify','/api/ff-menu/state','/api/ff-menu/logout'].includes(url.pathname)){
-      const native=await ffproxyNativeRoute(request,env,{authenticate,activateGameKey,digest,json});
+      const native=await ffproxyNativeRoute(request,env,{authenticate:licenseAuth,activateGameKey,digest,json,licenseProvider:vpsLicensing?'vps':'dhx'});
       return new Response(native.body,{status:native.status,headers:{...Object.fromEntries(native.headers),...corsHeaders}});
     }
 
     const authenticateWeb=(credential,device,build)=>/^[a-f0-9]{32}$/i.test(credential||'')
-      ?authenticateControlCode(credential,build,env,{authenticate,digest})
-      :authenticate(credential,device,build);
+      ?authenticateControlCode(credential,build,env,{authenticate:licenseAuth,digest})
+      :vpsLicensing?Promise.resolve({ok:false,status:401,body:{valid:false,message:'Use the 32-character WEB CONTROL code from the game'}}):licenseAuth(credential,device,build);
 
     if (url.pathname === '/') return json({ ok: true, name: 'DRAGON HEX Control API', version: '3.0' }, 200, corsHeaders);
-    if (url.pathname === '/keys') return Response.redirect(`${UPSTREAM}/keys`, 302);
+    if (url.pathname === '/keys') return Response.redirect(`${vpsLicensing?VPS_LICENSE_ORIGIN:UPSTREAM}/keys`, 302);
     if (url.pathname === '/api/auth' && request.method === 'POST') {
       const data=await request.json().catch(()=>null);
       const auth=await authenticateWeb(data?.key?.trim(), null, data?.build);
       const {key:privateKey,...publicBody}=auth.body;
       return json(publicBody,auth.status,corsHeaders);
     }
-    if (url.pathname === '/api/status' && request.method === 'GET') return proxy('/api/status', request, corsHeaders);
+    if (url.pathname === '/api/status' && request.method === 'GET') return vpsLicensing?json({ok:true,maintenance:false,message:''},200,corsHeaders):proxy('/api/status', request, corsHeaders);
     if (url.pathname === '/api/feature-catalog' && request.method === 'GET') {
       const auth = await authenticateWeb(bearer(request), null, url.searchParams.get('build'));
       if (!auth.ok) return json(auth.body, auth.status, corsHeaders);
-      const profile=await readState(env,`user:${await digest(auth.body.key || bearer(request))}`,'profile');
+      const profile=await readState(env,(auth.scope || `user:${await digest(auth.body.key || bearer(request))}`),'profile');
       if(profile?.receiverVariant==='ffproxy'&&profile.protocolVersion===4)return json({ok:true,receiverVariant:'ffproxy',protocolVersion:4,ready:true,features:ffproxyControls(profile.receiverRevision||1)},200,corsHeaders);
       if(profile?.receiverVariant==='dragonx'&&profile.protocolVersion===3)return json({ok:true,receiverVariant:'dragonx',protocolVersion:3,ready:true,features:DRAGONX_CONTROLS.map(({slot,...f})=>f)},200,corsHeaders);
       return json({ok:true,receiverVariant:'ffproxy',protocolVersion:4,receiverRevision:3,ready:false,features:ffproxyControls(3)},200,corsHeaders);
@@ -240,7 +244,7 @@ export default {
     if (url.pathname === '/api/device-patch' && request.method === 'POST') {
       const data = await request.json().catch(() => null);
       const key = bearer(request);
-      const auth = await authenticate(key, data?.deviceId, data?.build);
+      const auth = await licenseAuth(key, data?.deviceId, data?.build);
       if (!auth.ok) return json(auth.body, auth.status, corsHeaders);
       const receiverVariant=data.receiverVariant || 'legacy';
       if(!['legacy','dragonx'].includes(receiverVariant))return json({ok:false,message:'Unsupported receiver variant'},400,corsHeaders);
@@ -249,7 +253,7 @@ export default {
       const template = fullTemplate || await env.DEVICE_CONFIG.get(receiverVariant==='dragonx'?'receiver:template:dragonx:v1':'receiver:template:v2', 'json');
       if (!template) return json({ ok: false, message: 'Receiver template is not installed' }, 503, corsHeaders);
       const token = hex(crypto.getRandomValues(new Uint8Array(32)));
-      const storageKey = `user:${await digest(auth.body.key || key)}`;
+      const storageKey = (auth.scope || `user:${await digest(auth.body.key || key)}`);
       if (!env.DEVICE_STATE) return json({ok:false,message:'Per-key control storage is unavailable'},503,corsHeaders);
       const pkg = await personalize(template, token);
       // Only Cloudflare KV holds the original access key; the patch holds a scoped
@@ -268,7 +272,7 @@ export default {
       if (!receiver) return json({ ok: false, message: 'Receiver not paired' }, 401, corsHeaders);
       const protocolVersion=url.pathname.endsWith('-v3')?3:url.pathname.endsWith('-v2')?2:1;
       if((receiver.protocolVersion || 1)!==protocolVersion)return json({ok:false,message:'Receiver version mismatch'},409,corsHeaders);
-      const auth = await authenticate(receiver.key, receiver.deviceId, receiver.build);
+      const auth = await licenseAuth(receiver.key, receiver.deviceId, receiver.build);
       if (!auth.ok) return json(auth.body, auth.status, corsHeaders);
       if (!env.DEVICE_STATE) return json({ok:false,message:'Per-key control storage is unavailable'},503,corsHeaders);
       const runtimeDevice=request.headers.get('X-Dragonhex-Device') || '';
@@ -279,7 +283,7 @@ export default {
       const allowedMask=protocolVersion===2?0x3fff807f:0xff8000;
       const appliedMask=/^\d{1,10}$/.test(applied || '') && Number(applied)<=allowedMask && (Number(applied)&~allowedMask)===0 ? Number(applied) : null;
       const appliedValues=protocolVersion===3?parseDragonxReadback(request.headers.get('X-Dragonhex-Values')):null;
-      const storageKey=`user:${await digest(auth.body.key || receiver.key)}`;
+      const storageKey=(auth.scope || `user:${await digest(auth.body.key || receiver.key)}`);
       const stub=env.DEVICE_STATE.get(env.DEVICE_STATE.idFromName(storageKey));
       const runtime=await stub.fetch('https://state/runtime',{method:'POST',body:JSON.stringify({tokenHash:await digest(token),deviceHash:await digest(runtimeDevice),appliedMask,appliedValues,protocolVersion,receiverVariant:receiver.receiverVariant || 'legacy',readback:protocolVersion>=2 && hookFlags!==null,hookFlags})});
       if (!runtime.ok) return json({ok:false,message:await runtime.text()},runtime.status,corsHeaders);
@@ -292,7 +296,7 @@ export default {
       const deviceId = url.searchParams.get('deviceId') || '';
       const auth = await authenticateWeb(key, deviceId, url.searchParams.get('build') || '');
       if (!auth.ok) return json(auth.body, auth.status, corsHeaders);
-      const storageKey = `user:${await digest(auth.body.key || key)}`;
+      const storageKey = (auth.scope || `user:${await digest(auth.body.key || key)}`);
       const seen = await readState(env, storageKey, 'seen');
       const profile=await readState(env,storageKey,'profile');
       if(profile?.receiverVariant==='ffproxy'&&profile.protocolVersion===4){
@@ -310,7 +314,7 @@ export default {
       const deviceId = url.searchParams.get('deviceId')?.trim() || '';
       const auth = await authenticateWeb(key, deviceId, url.searchParams.get('build') || '');
       if (!auth.ok) return json(auth.body, auth.status || 401, corsHeaders);
-      const storageKey = `user:${await digest(auth.body.key || key)}`;
+      const storageKey = (auth.scope || `user:${await digest(auth.body.key || key)}`);
       const stored = await readState(env, storageKey, 'config');
       const profile=await readState(env,storageKey,'profile');
       return json({ ok: true, config: profile?.protocolVersion===4?normalizeFfproxy(stored||{},profile.receiverRevision||1):profile?.protocolVersion===3?normalizeDragonx(stored || {}):normalize(stored || {}) }, 200, corsHeaders);
@@ -323,7 +327,7 @@ export default {
       const deviceId = String(data.deviceId || '').trim();
       const auth = await authenticateWeb(key, deviceId, data.build);
       if (!auth.ok) return json(auth.body, auth.status || 401, corsHeaders);
-      const storageKey = `user:${await digest(auth.body.key || key)}`;
+      const storageKey = (auth.scope || `user:${await digest(auth.body.key || key)}`);
       const profile=await readState(env,storageKey,'profile');
       if (!(profile?.protocolVersion===4?validFfproxy(data.config,profile.receiverRevision||1):profile?.protocolVersion===3?validDragonx(data.config):validConfig(data.config))) return json({ ok: false, message: 'Invalid feature configuration' }, 400, corsHeaders);
       const config=profile?.protocolVersion===4?normalizeFfproxy(data.config,profile.receiverRevision||1):profile?.protocolVersion===3?normalizeDragonx(data.config):normalize(Object.fromEntries([...FEATURES,'target','headshot','aimSystemTarget','fovRadius'].filter(k=>data.config[k]!==undefined).map(k=>[k,data.config[k]])));
